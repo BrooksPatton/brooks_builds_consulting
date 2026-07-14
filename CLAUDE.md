@@ -15,8 +15,11 @@ Production: brooksbuilds.com (apex canonical, www redirects) on S3 + CloudFront,
   code/infra lenses as relevant), findings fixed and re-reviewed until a round has zero blocking
   findings. Done is not the exit condition — passing review is.
 - **Announce commits at the end of the message.** Brooks' terminal may not scroll up; if a turn
-  made a git commit or push, the last lines of the reply must say so explicitly (hash + one-line
-  summary + pushed-or-not).
+  made a git commit, the last lines of the reply must say so explicitly (hash + one-line summary).
+- **Never push from the sandbox — Brooks pushes.** No push credentials are set up in the sandbox
+  and that's intentional. Commit locally, then end the message with a "push ready" callout listing
+  the unpushed commits; Brooks runs `git push` from his own terminal. Don't modify his git
+  remotes/config.
 
 ## Site facts
 

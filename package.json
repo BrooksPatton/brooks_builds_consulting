@@ -1,0 +1,28 @@
+{
+  "name": "brooks_builds_consulting",
+  "version": "1.0.0",
+  "description": "Marketing site for Brooks Builds Consulting (static HTML+CSS; site/ is the deploy root)",
+  "private": true,
+  "scripts": {
+    "lint": "npm run lint:html && npm run lint:css && npm run lint:format && npm run check:sentry",
+    "lint:html": "html-validate \"site/**/*.html\"",
+    "lint:css": "stylelint \"site/css/**/*.css\"",
+    "lint:format": "prettier --check \"site/**/*.{html,css,js}\" \"!site/assets/sentry.min.js\"",
+    "format": "prettier --write \"site/**/*.{html,css,js}\" \"!site/assets/sentry.min.js\"",
+    "check:sentry": "node scripts/check-sentry-drift.mjs",
+    "vendor:sentry": "node scripts/vendor-sentry.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BrooksPatton/brooks_builds_consulting.git"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@sentry/browser": "10.65.0",
+    "esbuild": "0.28.1",
+    "html-validate": "11.5.6",
+    "prettier": "3.9.5",
+    "stylelint": "17.14.0",
+    "stylelint-config-standard": "40.0.0"
+  }
+}

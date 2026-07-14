@@ -2,6 +2,8 @@
   "extends": ["html-validate:recommended"],
   "rules": {
     "no-redundant-role": "off",
-    "prefer-native-element": "off"
+    "prefer-native-element": "off",
+    "void-style": ["error", { "style": "selfclosing" }],
+    "doctype-style": "off"
   }
 }

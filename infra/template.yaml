@@ -1,0 +1,311 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  brooksbuilds.com static site: private S3 origin + CloudFront (OAC), ACM cert,
+  www/cloudfront-domain redirect function, security headers, and a GitHub Actions
+  OIDC deploy role. Deploy ONCE from us-east-1 (CloudFront requires the ACM cert
+  there; every other resource here works from us-east-1 too):
+
+    aws cloudformation deploy --region us-east-1 \
+      --template-file infra/template.yaml \
+      --stack-name brooksbuilds-site \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides HostedZoneId=<ZONE_ID> \
+        SentryIngestHost=<oXXXXXX.ingest.us.sentry.io — from your DSN; do not skip>
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: brooksbuilds.com
+    Description: Apex domain (canonical host). www.<DomainName> is also served and 301s to it.
+  HostedZoneId:
+    Type: String
+    Description: >
+      Route53 hosted zone ID for the domain. Used ONLY to auto-create the ACM DNS
+      validation CNAMEs (additive records; cannot disturb existing records like
+      learning.brooksbuilds.com). The real ALIAS records are created manually.
+  GitHubRepo:
+    Type: String
+    Default: BrooksPatton/brooks_builds_consulting
+    Description: GitHub org/repo allowed to assume the deploy role (main branch only).
+  SentryIngestHost:
+    Type: String
+    Default: o0.ingest.sentry.io
+    Description: >
+      TODO(brooks): set to your DSN's ingest host (e.g. oXXXXXX.ingest.us.sentry.io).
+      Must match the DSN in site/assets/sentry-init.js — change both together.
+  CreateOIDCProvider:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Set to "false" if this AWS account already has an OIDC provider for
+      token.actions.githubusercontent.com (only one per URL per account is allowed).
+
+Conditions:
+  ShouldCreateOIDCProvider: !Equals [!Ref CreateOIDCProvider, "true"]
+
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Versioning is the rollback story: deploys use `aws s3 sync --delete`
+      # with no build artifacts, so prior object versions are the only undo.
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # Separate resource on purpose: the policy references the distribution ARN and
+  # the distribution references the bucket — inlining the policy on the bucket
+  # would be a real circular dependency; as siblings CloudFormation resolves it.
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontGet
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${SiteBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+          # Without ListBucket, S3 answers 403 (not 404) for missing keys, and the
+          # distribution's 404 -> /404.html mapping would have to swallow real
+          # permission errors. With it, missing pages are genuine 404s.
+          - Sid: AllowCloudFrontList
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:ListBucket
+            Resource: !GetAtt SiteBucket.Arn
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub "www.${DomainName}"
+      ValidationMethod: DNS
+      # HostedZoneId here lets CloudFormation create the validation CNAMEs itself;
+      # otherwise the stack sits in CREATE_IN_PROGRESS waiting for manual records.
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+        - DomainName: !Sub "www.${DomainName}"
+          HostedZoneId: !Ref HostedZoneId
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # viewer-request function: canonical-host 301s (www + *.cloudfront.net -> apex),
+  # /index.html -> /, and directory-style URI rewrites to index.html objects.
+  RedirectFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub "${AWS::StackName}-redirect"
+      # Without AutoPublish, updates land in the DEVELOPMENT stage and do nothing.
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Canonical host + clean URL handling
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        function handler(event) {
+          var request = event.request;
+          var host = request.headers.host.value;
+          var uri = request.uri;
+
+          // Preserve the query string across redirects (UTM tags on shared links).
+          var qs = '';
+          var keys = Object.keys(request.querystring);
+          if (keys.length) {
+            qs = '?' + keys.map(function (k) {
+              var entry = request.querystring[k];
+              if (entry.multiValue) {
+                return entry.multiValue.map(function (v) { return k + '=' + v.value; }).join('&');
+              }
+              return entry.value ? k + '=' + entry.value : k;
+            }).join('&');
+          }
+
+          // Canonical URI: strip any trailing index.html, give extensionless
+          // paths a trailing slash. Normalizing BEFORE the host check keeps
+          // every non-canonical URL to a single redirect hop.
+          if (uri.endsWith('/index.html')) {
+            uri = uri.slice(0, uri.length - 'index.html'.length);
+          }
+          if (uri !== '/' && !uri.endsWith('/') && !uri.includes('.')) {
+            uri += '/';
+          }
+
+          // www + *.cloudfront.net -> apex, and any non-canonical URI -> canonical.
+          if (host !== '${DomainName}' || uri !== request.uri) {
+            return {
+              statusCode: 301,
+              statusDescription: 'Moved Permanently',
+              headers: { location: { value: 'https://${DomainName}' + uri + qs } }
+            };
+          }
+
+          // Serve directory URIs from their index object (rewrite, not redirect).
+          if (uri.endsWith('/')) {
+            request.uri = uri + 'index.html';
+          }
+          return request;
+        }
+
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub "${AWS::StackName}-security-headers"
+        SecurityHeadersConfig:
+          # connect-src must match the Sentry DSN in site/assets/sentry-init.js.
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: !Sub >-
+              default-src 'none'; script-src 'self'; style-src 'self';
+              img-src 'self' data:; connect-src https://${SentryIngestHost};
+              base-uri 'none'; form-action 'none'; frame-ancestors 'none';
+              upgrade-insecure-requests
+            Override: true
+          # Deliberately NO includeSubDomains: learning.brooksbuilds.com shares the
+          # zone. Add it (and preload) only after every subdomain is HTTPS-only.
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: false
+            Preload: false
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+        CustomHeadersConfig:
+          Items:
+            - Header: Permissions-Policy
+              Value: camera=(), microphone=(), geolocation=()
+              Override: true
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Ref DomainName
+        Aliases:
+          - !Ref DomainName
+          - !Sub "www.${DomainName}"
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        IPV6Enabled: true # remember: AAAA ALIAS records as well as A
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: s3-site
+            DomainName: !GetAtt SiteBucket.RegionalDomainName
+            OriginAccessControlId: !Ref OriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: "" # required empty when using OAC
+        DefaultCacheBehavior:
+          TargetOriginId: s3-site
+          ViewerProtocolPolicy: redirect-to-https
+          Compress: true
+          # Managed policy "CachingOptimized"
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt RedirectFunction.FunctionMetadata.FunctionARN
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /404.html
+            ErrorCachingMinTTL: 60
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # AWS validates GitHub's OIDC against trusted root CAs and ignores this value,
+      # but CloudFormation still requires a non-empty list.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-deploy"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateOIDCProvider
+                - !Ref GitHubOIDCProvider
+                - !Sub "arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com"
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                # Exact, case-sensitive. Breaks (on purpose) if the workflow adds
+                # `environment:` — the sub claim changes shape; update here if so.
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+      Policies:
+        - PolicyName: deploy-site
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: SyncDiff
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt SiteBucket.Arn
+              - Sid: SyncWrite
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${SiteBucket.Arn}/*"
+              - Sid: Invalidate
+                Effect: Allow
+                Action: cloudfront:CreateInvalidation
+                Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}"
+
+Outputs:
+  BucketName:
+    Description: Set as GitHub Actions variable S3_BUCKET
+    Value: !Ref SiteBucket
+  DistributionId:
+    Description: Set as GitHub Actions variable CF_DISTRIBUTION_ID
+    Value: !Ref Distribution
+  DistributionDomainName:
+    Description: Target for the 4 Route53 ALIAS records (A + AAAA for apex and www)
+    Value: !GetAtt Distribution.DomainName
+  DeployRoleArn:
+    Description: Set as GitHub Actions variable AWS_DEPLOY_ROLE_ARN
+    Value: !GetAtt DeployRole.Arn

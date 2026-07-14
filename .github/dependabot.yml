@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Doubles as the update reminder for the vendored Sentry bundle:
+  # when @sentry/browser is bumped, run `npm run vendor:sentry` and commit
+  # the regenerated site/assets/sentry.min.js (CI fails on drift otherwise).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

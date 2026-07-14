@@ -17,9 +17,13 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Skips (green run) until the AWS side exists: deploy the CloudFormation
+    # stack, then set the three repo Actions variables (AWS_DEPLOY_ROLE_ARN,
+    # S3_BUCKET, CF_DISTRIBUTION_ID) and this job starts running on its own.
+    if: vars.AWS_DEPLOY_ROLE_ARN != ''
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -27,7 +31,7 @@ jobs:
       - name: Lint (deploy gate)
         run: npm run lint
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1

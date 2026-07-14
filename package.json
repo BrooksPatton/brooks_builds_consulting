@@ -7,8 +7,9 @@
     "lint": "npm run lint:html && npm run lint:css && npm run lint:format && npm run check:sentry",
     "lint:html": "html-validate \"site/**/*.html\"",
     "lint:css": "stylelint \"site/css/**/*.css\"",
-    "lint:format": "prettier --check \"site/**/*.{html,css,js}\" \"!site/assets/sentry.min.js\"",
-    "format": "prettier --write \"site/**/*.{html,css,js}\" \"!site/assets/sentry.min.js\"",
+    "lint:format": "prettier --check \"site/**/*.{html,css,js}\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"*.config.js\" \"!site/assets/sentry.min.js\"",
+    "format": "prettier --write \"site/**/*.{html,css,js}\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"*.config.js\" \"!site/assets/sentry.min.js\"",
+    "test": "playwright test",
     "check:sentry": "node scripts/check-sentry-drift.mjs",
     "vendor:sentry": "node scripts/vendor-sentry.mjs"
   },
@@ -18,6 +19,7 @@
   },
   "license": "UNLICENSED",
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@sentry/browser": "10.65.0",
     "esbuild": "0.28.1",
     "html-validate": "11.5.6",

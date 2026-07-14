@@ -43,4 +43,7 @@ Production: brooksbuilds.com (apex canonical, www redirects) on S3 + CloudFront,
 
 - Serve locally: `python3 -m http.server 8080 --bind 0.0.0.0 --directory site`
 - Lint: `npm run lint` (html-validate + stylelint + prettier check)
+- Test: `npm test` (Playwright link-contract tests; starts its own server on :4173).
+  In the sandbox, browsers need `sbx policy allow network cdn.playwright.dev,playwright.download.prss.microsoft.com`
+  run on the host once, then `npx playwright install chromium`.
 - Re-vendor Sentry after a version bump: `npm run vendor:sentry`

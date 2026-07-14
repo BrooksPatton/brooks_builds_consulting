@@ -1,0 +1,68 @@
+name: Deploy (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      role-arn:
+        required: true
+        type: string
+      bucket:
+        required: true
+        type: string
+      distribution-id:
+        required: true
+        type: string
+
+# Required for OIDC: without id-token permission, configure-aws-credentials
+# fails with a misleading "credentials could not be loaded" error.
+# (Callers must grant at least these permissions too.)
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint (deploy gate)
+        run: npm run lint
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ inputs.role-arn }}
+          aws-region: us-east-1
+
+      # Two passes because s3 sync sets metadata per invocation:
+      # assets get a 1-day browser cache, HTML/xml/txt always revalidate
+      # (no hashed filenames, so long asset TTLs would serve stale CSS after deploys).
+      # --delete is safe on BOTH passes: sync's exclude filters also apply to the
+      # destination listing, so each pass only deletes stale objects of its own
+      # file types — pass 1 never touches HTML, pass 2 only prunes html/xml/txt.
+      # sentry-init.js rides in the no-cache pass: it carries the DSN, and a
+      # day-stale cached copy after a DSN change would silently drop events.
+      - name: Sync assets (cacheable)
+        run: |
+          aws s3 sync site/ "s3://${{ inputs.bucket }}" --delete \
+            --exclude "*.html" --exclude "*.xml" --exclude "*.txt" \
+            --exclude "*sentry-init.js" \
+            --cache-control "public, max-age=86400"
+      - name: Sync HTML and metadata files (no-cache)
+        run: |
+          aws s3 sync site/ "s3://${{ inputs.bucket }}" --delete \
+            --exclude "*" --include "*.html" --include "*.xml" --include "*.txt" \
+            --include "*sentry-init.js" \
+            --cache-control "public, max-age=0, must-revalidate"
+
+      # "/*" counts as a single path against the 1,000 free invalidation
+      # paths per month — daily deploys cost nothing at this scale.
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ inputs.distribution-id }}" \
+            --paths "/*"

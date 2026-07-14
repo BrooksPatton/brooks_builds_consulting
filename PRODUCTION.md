@@ -18,7 +18,7 @@ Decisions confirmed with Brooks (do not re-ask):
 - **Domain: brooksbuilds.com (apex, canonical) + www (301 → apex)**. Brooks does all DNS record changes himself. `learning.brooksbuilds.com` (his LMS) is on the same zone and **must not be disturbed**.
 - **Sentry: vendored SDK** — pinned copy of `@sentry/browser`'s CDN bundle committed to the repo; only external call is event ingest. No loader snippet, no Sentry CDN at runtime.
 - **In scope**: SEO/social pack, security + caching headers, uptime monitoring (manual signup). **Out of scope**: analytics.
-- **IaC: one CloudFormation template**, deployed once via `aws cloudformation deploy` from us-east-1 (CloudFront needs the ACM cert there; every other resource works from us-east-1 too — one stack, one region). No Terraform/state backend for a set-once stack.
+- **IaC: one CloudFormation template, two stacks** (`brooksbuilds-site-beta` at beta.brooksbuilds.com with X-Robots-Tag noindex, auto-deployed on pushes to main; `brooksbuilds-site-prod` at apex+www, deployed via the manual Release workflow), both via `aws cloudformation deploy` from us-east-1 (CloudFront needs the ACM cert there). No Terraform/state backend for set-once stacks.
 
 ## Architecture
 
@@ -30,7 +30,7 @@ Key gotchas already pressure-tested (bake these in, don't rediscover them):
 - **ACM cert**: both `brooksbuilds.com` + `www` as SANs; `DomainValidationOptions` with `HostedZoneId` parameter so CFN auto-creates the (additive, harmless) validation CNAMEs and the stack doesn't hang. Brooks still creates the real ALIAS records manually.
 - **Real 404s under OAC**: grant the CloudFront principal `s3:ListBucket` (not just `GetObject`) so S3 returns 404 instead of 403 for missing keys; then one CustomErrorResponse 404 → `/404.html` (code 404, ErrorCachingMinTTL 60). Bucket policy must be a **separate resource** from the bucket (distribution ARN condition — looks circular, isn't).
 - **OIDC**: `AWS::IAM::OIDCProvider` needs a non-empty `ThumbprintList` (`6938fd4d98bab03faadb97b34396831e3780aea1`) even though AWS ignores it; only one provider per URL per account (check none exists). Role trust: `aud=sts.amazonaws.com` AND `sub=repo:BrooksPatton/brooks_builds_consulting:ref:refs/heads/main` (exact, case-sensitive; breaks if the workflow adds `environment:`). Workflow MUST set `permissions: {id-token: write, contents: read}`.
-- **CSP + vendored Sentry**: init goes in a local file `site/assets/sentry-init.js` (never inline — avoids `'unsafe-inline'`), loaded with `defer` after `sentry.min.js`. CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://<DSN ingest host>; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests`. The ingest host lives in BOTH sentry-init.js and the template — note the duplication in comments. Sentry init: `sampleRate: 1.0`, `allowUrls: [/brooksbuilds\.com/]` to keep extension noise off the free tier.
+- **CSP + vendored Sentry**: init goes in a local file `site/assets/sentry-init.js` (never inline — avoids `'unsafe-inline'`), loaded with `defer` after `sentry.min.js`. CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://<DSN ingest host>; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests`. The ingest host lives in BOTH sentry-init.js and the template — note the duplication in comments. Sentry init: `sampleRate: 1.0`, anchored `allowUrls` matching apex/www/beta hosts to keep extension noise off the free tier, and an `environment` tag (production vs beta) derived from the hostname.
 - **Cache without hashed filenames**: HTML/xml/txt → `public, max-age=0, must-revalidate`; css/assets → `public, max-age=86400`. Two-pass `aws s3 sync` (`--delete` on the assets pass only). `/*` invalidation counts as ONE path — free at this scale. README note: bump `?v=N` on the stylesheet link if a same-day CSS fix ever matters.
 - **404.html must use absolute asset paths** (`/css/styles.css`) — it renders at arbitrary URLs.
 - **OG image must be raster** (~1200×630 PNG, absolute URL) — SVG doesn't render in Slack/LinkedIn previews. Export/compose from `logos/` assets (ImageMagick or manual).
@@ -57,8 +57,10 @@ infra/template.yaml                 — CloudFormation: bucket, bucket policy, A
                                       OIDC provider, deploy role, outputs
 .github/workflows/ci.yml            — PRs: npm ci; html-validate, stylelint, prettier check;
                                       vendored-Sentry version-drift check
-.github/workflows/deploy.yml        — main: lint gate → OIDC assume role → two-pass s3 sync
-                                      → cloudfront invalidation
+.github/workflows/deploy-reusable.yml — shared deploy logic (workflow_call): lint gate → OIDC
+                                      → two-pass s3 sync → cloudfront invalidation
+.github/workflows/deploy.yml        — Deploy Beta: push to main, BETA_* vars, calls reusable
+.github/workflows/release.yml       — Release: manual dispatch, PROD_* vars, calls reusable
 package.json + package-lock.json    — devDeps: html-validate, stylelint(+config-standard),
                                       prettier, @sentry/browser (vendoring source / Dependabot
                                       update reminder); scripts: lint, vendor:sentry
@@ -95,15 +97,22 @@ Final message: what was built, what CI does, and the ordered manual runbook belo
 
 ## Brooks' manual runbook (things only he can do)
 
-1. **Pre-flight**: `dig CAA brooksbuilds.com` (if CAA exists, it must permit `amazon.com` or ACM fails silently); confirm apex/www A/AAAA/CNAME slots in Route53 are free.
-2. **Sentry**: create a Browser-JS project; put the DSN in `site/assets/sentry-init.js` AND the ingest host in the CSP in `infra/template.yaml` (must match).
-3. **Launch blockers in the page**: real scheduling URL (3 spots), real pricing, headshot, social URLs — grep `TODO(brooks)`.
-4. **Deploy the stack** (once): `aws cloudformation deploy --region us-east-1 --template-file infra/template.yaml --stack-name brooksbuilds-site --capabilities CAPABILITY_NAMED_IAM --parameter-overrides DomainName=brooksbuilds.com HostedZoneId=<zone> GitHubRepo=BrooksPatton/brooks_builds_consulting`. Validation CNAMEs are auto-created; no babysitting.
-5. **GitHub**: add Actions **variables** (not secrets — none are secret): `AWS_DEPLOY_ROLE_ARN`, `CF_DISTRIBUTION_ID`, `S3_BUCKET` from stack outputs; enable Dependabot alerts; optional branch protection requiring CI.
-6. **First deploy**: re-run the deploy workflow; smoke-test `https://<dist>.cloudfront.net` — expect 301 to apex (proves the function).
-7. **DNS cutover**: 4 ALIAS records (A+AAAA × apex+www) → distribution domain. Don't touch `learning.*` or MX/TXT.
-8. **Uptime monitor** (UptimeRobot/Better Stack free tier): check apex for HTTP 200 **+ a content string** ("Fractional Director"), second check on www expecting 301.
-9. **Later**: verify every `*.brooksbuilds.com` subdomain is HTTPS-only → one-line stack update adds `includeSubDomains` (+preload); optional Google Search Console (one DNS TXT) + submit sitemap.
+Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push to main, serves `X-Robots-Tag: noindex`) and **production** (apex + www, deployed only by manually running the **Release** workflow). Exact stack commands live in the header of `infra/template.yaml`.
+
+**Beta (now):**
+1. **Pre-flight**: `dig CAA brooksbuilds.com` (if CAA exists, it must permit `amazon.com` or ACM fails silently).
+2. **Sentry**: create a Browser-JS project; put the DSN in `site/assets/sentry-init.js` AND the ingest host in the `SentryIngestHost` stack parameter (must match). Events tag themselves `beta`/`production` by hostname.
+3. **Deploy the beta stack** (`brooksbuilds-site-beta`, `Environment=beta`, `CreateOIDCProvider=true` — beta creates the account's one OIDC provider).
+4. **GitHub**: add Actions **variables** (not secrets) from the beta stack outputs: `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`. Next push to main deploys beta automatically.
+5. **Beta DNS**: A+AAAA ALIAS for `beta.brooksbuilds.com` → beta distribution domain. Verify end-to-end on the beta URL (placeholders are fine there): 200 + headers + `X-Robots-Tag: noindex`, cloudfront.net URL 301s to beta host, styled 404.
+
+**Release (when the content is ready):**
+6. **Launch blockers**: real scheduling URL (3 spots + `BOOKING_URL` in `tests/links.spec.js`), real pricing, headshot, social URLs — grep `TODO(brooks)`.
+7. **Deploy the prod stack** (`brooksbuilds-site-prod`, `Environment=production`, `CreateOIDCProvider=false`); add `PROD_*` GitHub variables from its outputs.
+8. **Run the Release workflow** (Actions tab → Release → Run workflow); smoke-test `https://<prod-dist>.cloudfront.net` — expect 301 to the apex.
+9. **DNS cutover**: 4 ALIAS records (A+AAAA × apex+www) → prod distribution domain. Don't touch `learning.*` or MX/TXT.
+10. **Uptime monitor** (UptimeRobot/Better Stack free tier): check apex for HTTP 200 **+ a content string** ("Fractional Director"), second check on www expecting 301.
+11. **Later**: verify every `*.brooksbuilds.com` subdomain is HTTPS-only → one-line stack update adds `includeSubDomains` (+preload); optional Google Search Console (one DNS TXT) + submit sitemap.
 
 ## Verification (end-to-end, after cutover)
 
@@ -124,4 +133,5 @@ Final message: what was built, what CI does, and the ordered manual runbook belo
   - Round 2 (targeted): rewritten CloudFront function re-verified by direct execution (15/15 cases correct); cfn-lint clean; full lint suite green. Loop converged: zero unresolved blocking findings.
 - [~] Step 4: all pipeline files committed locally (1b033eb + CLAUDE.md convention commits). Pushes are Brooks' job by convention (see CLAUDE.md) — push ready, awaiting his `git push`. CI should go green on the push; the deploy workflow fails until runbook steps 4–5 are done (expected).
 - [ ] Step 5: report + runbook delivered; awaiting Brooks' manual steps
-- [ ] Post-cutover verification complete (requires Brooks' steps 1–8)
+- [x] Phase 3 (beta/prod split): template environment-aware (beta = single host + X-Robots-Tag noindex; conditionals verified for both parameter sets), deploy split into reusable workflow + Deploy Beta (push to main) + Release (manual dispatch), Sentry events tagged by hostname with anchored allowUrls. Delta review: PASS, 0 blocking; polish applied (anchored allowUrls, per-stack output descriptions, all-vars + main-ref guards on both callers, convention-vs-IAM note in CLAUDE.md). cfn-lint clean, function matrix re-verified for beta domain, lint + 9 tests green.
+- [ ] Post-cutover verification complete (requires Brooks' runbook)

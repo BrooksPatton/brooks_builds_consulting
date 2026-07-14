@@ -1,0 +1,28 @@
+name: Release
+
+# Production deploys are manual: Actions tab -> Release -> Run workflow.
+# Runs from main, so the OIDC sub claim stays repo:...:ref:refs/heads/main —
+# do not add an `environment:` key (it changes the claim and breaks the
+# deploy role's trust policy).
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  production:
+    # Skips until the production stack exists and all PROD_* variables are set.
+    # The ref check keeps a dispatch from a non-main branch as a clean skip —
+    # the deploy role's OIDC trust only matches refs/heads/main anyway.
+    if: github.ref == 'refs/heads/main' && vars.PROD_AWS_DEPLOY_ROLE_ARN != '' && vars.PROD_S3_BUCKET != '' && vars.PROD_CF_DISTRIBUTION_ID != ''
+    uses: ./.github/workflows/deploy-reusable.yml
+    with:
+      role-arn: ${{ vars.PROD_AWS_DEPLOY_ROLE_ARN }}
+      bucket: ${{ vars.PROD_S3_BUCKET }}
+      distribution-id: ${{ vars.PROD_CF_DISTRIBUTION_ID }}

@@ -12,8 +12,11 @@ if (typeof Sentry !== "undefined") {
   Sentry.init({
     dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
     sampleRate: 1.0,
-    // Only report errors originating from our own pages; keeps browser-extension
-    // noise off the free-tier quota.
-    allowUrls: [/https?:\/\/(www\.)?brooksbuilds\.com/],
+    // One Sentry project serves both environments; tag events by host so beta
+    // noise is filterable (anything that isn't apex/www counts as beta).
+    environment: /^(www\.)?brooksbuilds\.com$/.test(location.hostname) ? "production" : "beta",
+    // Only report errors originating from our own pages (apex, www, beta);
+    // keeps browser-extension noise off the free-tier quota.
+    allowUrls: [/^https:\/\/([a-z0-9-]+\.)?brooksbuilds\.com\//],
   });
 }

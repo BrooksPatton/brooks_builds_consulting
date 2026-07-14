@@ -1,22 +1,44 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   brooksbuilds.com static site: private S3 origin + CloudFront (OAC), ACM cert,
-  www/cloudfront-domain redirect function, security headers, and a GitHub Actions
-  OIDC deploy role. Deploy ONCE from us-east-1 (CloudFront requires the ACM cert
-  there; every other resource here works from us-east-1 too):
+  host-canonicalization redirect function, security headers, and a GitHub Actions
+  OIDC deploy role. One template, two stacks (beta and production) — deploy
+  commands are in the comment below. us-east-1 only (CloudFront needs the ACM
+  cert there; every other resource here works from us-east-1 too).
 
-    aws cloudformation deploy --region us-east-1 \
-      --template-file infra/template.yaml \
-      --stack-name brooksbuilds-site \
-      --capabilities CAPABILITY_NAMED_IAM \
-      --parameter-overrides HostedZoneId=<ZONE_ID> \
-        SentryIngestHost=<oXXXXXX.ingest.us.sentry.io — from your DSN; do not skip>
+# Deploy BETA first — it creates the account's one GitHub OIDC provider.
+# Beta: single hostname, X-Robots-Tag noindex, auto-deployed by pushes to main.
+#
+#   aws cloudformation deploy --region us-east-1 \
+#     --template-file infra/template.yaml \
+#     --stack-name brooksbuilds-site-beta \
+#     --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides Environment=beta DomainName=beta.brooksbuilds.com \
+#       HostedZoneId=<ZONE_ID> CreateOIDCProvider=true \
+#       SentryIngestHost=<oXXXXXX.ingest.us.sentry.io — from your DSN; do not skip>
+#
+# Production: apex + www, deployed only by the manual Release workflow.
+#
+#   aws cloudformation deploy --region us-east-1 \
+#     --template-file infra/template.yaml \
+#     --stack-name brooksbuilds-site-prod \
+#     --capabilities CAPABILITY_NAMED_IAM \
+#     --parameter-overrides Environment=production DomainName=brooksbuilds.com \
+#       HostedZoneId=<ZONE_ID> CreateOIDCProvider=false \
+#       SentryIngestHost=<oXXXXXX.ingest.us.sentry.io — from your DSN; do not skip>
 
 Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [production, beta]
+    Description: >
+      production serves DomainName + www.DomainName (www 301s to the apex);
+      beta serves DomainName alone and sends X-Robots-Tag noindex on every response.
   DomainName:
     Type: String
     Default: brooksbuilds.com
-    Description: Apex domain (canonical host). www.<DomainName> is also served and 301s to it.
+    Description: Canonical host for this stack (e.g. brooksbuilds.com or beta.brooksbuilds.com).
   HostedZoneId:
     Type: String
     Description: >
@@ -43,6 +65,7 @@ Parameters:
 
 Conditions:
   ShouldCreateOIDCProvider: !Equals [!Ref CreateOIDCProvider, "true"]
+  IsProduction: !Equals [!Ref Environment, production]
 
 Resources:
   SiteBucket:
@@ -94,16 +117,22 @@ Resources:
     Type: AWS::CertificateManager::Certificate
     Properties:
       DomainName: !Ref DomainName
-      SubjectAlternativeNames:
-        - !Sub "www.${DomainName}"
+      # www exists only in production; beta is a single hostname.
+      SubjectAlternativeNames: !If
+        - IsProduction
+        - [!Sub "www.${DomainName}"]
+        - !Ref AWS::NoValue
       ValidationMethod: DNS
       # HostedZoneId here lets CloudFormation create the validation CNAMEs itself;
       # otherwise the stack sits in CREATE_IN_PROGRESS waiting for manual records.
       DomainValidationOptions:
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
-        - DomainName: !Sub "www.${DomainName}"
-          HostedZoneId: !Ref HostedZoneId
+        - !If
+          - IsProduction
+          - DomainName: !Sub "www.${DomainName}"
+            HostedZoneId: !Ref HostedZoneId
+          - !Ref AWS::NoValue
 
   OriginAccessControl:
     Type: AWS::CloudFront::OriginAccessControl
@@ -204,6 +233,14 @@ Resources:
             - Header: Permissions-Policy
               Value: camera=(), microphone=(), geolocation=()
               Override: true
+            # Beta must never be indexed — the same site artifact deploys to both
+            # environments, so the noindex lives in headers, not in robots.txt.
+            - !If
+              - IsProduction
+              - !Ref AWS::NoValue
+              - Header: X-Robots-Tag
+                Value: noindex, nofollow
+                Override: true
 
   Distribution:
     Type: AWS::CloudFront::Distribution
@@ -213,7 +250,7 @@ Resources:
         Comment: !Ref DomainName
         Aliases:
           - !Ref DomainName
-          - !Sub "www.${DomainName}"
+          - !If [IsProduction, !Sub "www.${DomainName}", !Ref AWS::NoValue]
         DefaultRootObject: index.html
         HttpVersion: http2and3
         IPV6Enabled: true # remember: AAAA ALIAS records as well as A
@@ -298,14 +335,16 @@ Resources:
 
 Outputs:
   BucketName:
-    Description: Set as GitHub Actions variable S3_BUCKET
+    Description: Set as GitHub Actions variable BETA_S3_BUCKET or PROD_S3_BUCKET (per stack)
     Value: !Ref SiteBucket
   DistributionId:
-    Description: Set as GitHub Actions variable CF_DISTRIBUTION_ID
+    Description: Set as GitHub Actions variable BETA_CF_DISTRIBUTION_ID or PROD_CF_DISTRIBUTION_ID
     Value: !Ref Distribution
   DistributionDomainName:
-    Description: Target for the 4 Route53 ALIAS records (A + AAAA for apex and www)
+    Description: >-
+      Route53 ALIAS target — A + AAAA per alias (beta: 2 records for the beta host;
+      production: 4 records for apex + www)
     Value: !GetAtt Distribution.DomainName
   DeployRoleArn:
-    Description: Set as GitHub Actions variable AWS_DEPLOY_ROLE_ARN
+    Description: Set as GitHub Actions variable BETA_AWS_DEPLOY_ROLE_ARN or PROD_AWS_DEPLOY_ROLE_ARN
     Value: !GetAtt DeployRole.Arn

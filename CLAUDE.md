@@ -1,7 +1,10 @@
 # Brooks Builds Consulting — Project Conventions
 
 Marketing site for Brooks' fractional Director of Engineering consulting business.
-Production: brooksbuilds.com (apex canonical, www redirects) on S3 + CloudFront, deployed by GitHub Actions.
+Two environments on S3 + CloudFront (one CloudFormation template, two stacks): **beta**
+(beta.brooksbuilds.com, auto-deployed on every push to main, noindex) and **production**
+(brooksbuilds.com apex canonical + www redirect, deployed only via the manual `Release`
+workflow in the Actions tab).
 
 ## How to work with Brooks
 
@@ -38,6 +41,10 @@ Production: brooksbuilds.com (apex canonical, www redirects) on S3 + CloudFront,
   wording must never echo it — phrase-level originality is a hard requirement.
 - **HSTS**: served WITHOUT `includeSubDomains` on purpose (learning.brooksbuilds.com shares the
   zone). Only add it after verifying every subdomain is HTTPS-only.
+- **Beta/prod separation is by convention, not IAM**: both deploy roles trust the same OIDC claim
+  (`refs/heads/main`), so any main-branch workflow could technically assume the prod role.
+  Acceptable for a solo repo; the hard-enforcement upgrade is a GitHub `environment:` on the
+  release job + matching `:environment:` sub claim in the prod role's trust policy.
 
 ## Commands
 

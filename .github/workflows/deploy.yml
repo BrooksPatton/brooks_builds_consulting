@@ -1,66 +1,25 @@
-name: Deploy
+name: Deploy Beta
 
 on:
   push:
     branches: [main]
 
-# Required for OIDC: without id-token permission, configure-aws-credentials
-# fails with a misleading "credentials could not be loaded" error.
 permissions:
   id-token: write
   contents: read
 
 concurrency:
-  group: deploy
+  group: deploy-beta
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    # Skips (green run) until the AWS side exists: deploy the CloudFormation
-    # stack, then set the three repo Actions variables (AWS_DEPLOY_ROLE_ARN,
-    # S3_BUCKET, CF_DISTRIBUTION_ID) and this job starts running on its own.
-    if: vars.AWS_DEPLOY_ROLE_ARN != ''
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Lint (deploy gate)
-        run: npm run lint
-
-      - uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: us-east-1
-
-      # Two passes because s3 sync sets metadata per invocation:
-      # assets get a 1-day browser cache, HTML/xml/txt always revalidate
-      # (no hashed filenames, so long asset TTLs would serve stale CSS after deploys).
-      # --delete is safe on BOTH passes: sync's exclude filters also apply to the
-      # destination listing, so each pass only deletes stale objects of its own
-      # file types — pass 1 never touches HTML, pass 2 only prunes html/xml/txt.
-      # sentry-init.js rides in the no-cache pass: it carries the DSN, and a
-      # day-stale cached copy after a DSN change would silently drop events.
-      - name: Sync assets (cacheable)
-        run: |
-          aws s3 sync site/ "s3://${{ vars.S3_BUCKET }}" --delete \
-            --exclude "*.html" --exclude "*.xml" --exclude "*.txt" \
-            --exclude "*sentry-init.js" \
-            --cache-control "public, max-age=86400"
-      - name: Sync HTML and metadata files (no-cache)
-        run: |
-          aws s3 sync site/ "s3://${{ vars.S3_BUCKET }}" --delete \
-            --exclude "*" --include "*.html" --include "*.xml" --include "*.txt" \
-            --include "*sentry-init.js" \
-            --cache-control "public, max-age=0, must-revalidate"
-
-      # "/*" counts as a single path against the 1,000 free invalidation
-      # paths per month — daily deploys cost nothing at this scale.
-      - name: Invalidate CloudFront
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id "${{ vars.CF_DISTRIBUTION_ID }}" \
-            --paths "/*"
+  beta:
+    # Skips (green run) until the beta stack exists: deploy it, then set the
+    # three BETA_* repo Actions variables and this starts running on its own.
+    # All three are checked so a half-finished setup skips instead of failing.
+    if: vars.BETA_AWS_DEPLOY_ROLE_ARN != '' && vars.BETA_S3_BUCKET != '' && vars.BETA_CF_DISTRIBUTION_ID != ''
+    uses: ./.github/workflows/deploy-reusable.yml
+    with:
+      role-arn: ${{ vars.BETA_AWS_DEPLOY_ROLE_ARN }}
+      bucket: ${{ vars.BETA_S3_BUCKET }}
+      distribution-id: ${{ vars.BETA_CF_DISTRIBUTION_ID }}

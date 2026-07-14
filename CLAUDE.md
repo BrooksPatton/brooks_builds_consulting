@@ -14,6 +14,9 @@ Production: brooksbuilds.com (apex canonical, www redirects) on S3 + CloudFront,
 - **Review loop convention.** Nontrivial changes get reviewed by fresh-context agents (brand, copy,
   code/infra lenses as relevant), findings fixed and re-reviewed until a round has zero blocking
   findings. Done is not the exit condition — passing review is.
+- **Announce commits at the end of the message.** Brooks' terminal may not scroll up; if a turn
+  made a git commit or push, the last lines of the reply must say so explicitly (hash + one-line
+  summary + pushed-or-not).
 
 ## Site facts
 

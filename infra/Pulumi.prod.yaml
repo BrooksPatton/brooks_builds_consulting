@@ -1,0 +1,16 @@
+# brooksbuilds.com apex + www (301 → apex) — applied only via the manual
+# workflow_dispatch (infra.yml up-prod job), mirroring the site's Release workflow.
+# Nothing here is secret. The apex can only be claimed after the old platform app's
+# resources are retired from the brooks_builds stack (see PLAN.md — loud-fail ordering).
+config:
+  # CloudFront requires its ACM certificate in us-east-1; the whole project lives there.
+  aws:region: us-east-1
+  brooks_builds_consulting:domain_name: brooksbuilds.com
+  brooks_builds_consulting:zone_name: brooksbuilds.com
+  brooks_builds_consulting:github_repo: BrooksPatton/brooks_builds_consulting
+  # Ingest host of the DSN in site/assets/sentry-init.js (goes into the CSP
+  # connect-src). If the DSN ever changes, change both together.
+  brooks_builds_consulting:sentry_ingest_host: o1079394.ingest.us.sentry.io
+  # Only one OIDC provider per URL per AWS account — beta created it; look it up.
+  brooks_builds_consulting:create_github_oidc_provider: "false"
+  brooks_builds_consulting:create_pulumi_ci_role: "false"

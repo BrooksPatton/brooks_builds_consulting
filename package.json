@@ -7,8 +7,8 @@
     "lint": "npm run lint:html && npm run lint:css && npm run lint:format && npm run check:sentry",
     "lint:html": "html-validate \"site/**/*.html\"",
     "lint:css": "stylelint \"site/css/**/*.css\"",
-    "lint:format": "prettier --check \"site/**/*.{html,css,js}\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"*.config.js\" \"!site/assets/sentry.min.js\"",
-    "format": "prettier --write \"site/**/*.{html,css,js}\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"*.config.js\" \"!site/assets/sentry.min.js\"",
+    "lint:format": "prettier --check \"site/**/*.{html,css,js}\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"*.config.js\" \"infra/**/*.ts\" \"!site/assets/sentry.min.js\"",
+    "format": "prettier --write \"site/**/*.{html,css,js}\" \"tests/**/*.js\" \"scripts/**/*.mjs\" \"*.config.js\" \"infra/**/*.ts\" \"!site/assets/sentry.min.js\"",
     "test": "playwright test",
     "check:sentry": "node scripts/check-sentry-drift.mjs",
     "vendor:sentry": "node scripts/vendor-sentry.mjs"

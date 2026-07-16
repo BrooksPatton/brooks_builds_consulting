@@ -1,5 +1,59 @@
 # Brooks Builds Consulting — Production Deployment (Execution Playbook, Phase 2)
 
+> ## ⚠ HANDOFF — READ THIS FIRST (written 2026-07-16 for a fresh session)
+>
+> **Decision made with Brooks:** the site's infrastructure will be **ported from
+> `infra/template.yaml` (CloudFormation) to Pulumi**, building on Brooks' EXISTING Pulumi
+> setup (private repo, deploys his LMS + its lambdas; it was not visible to the previous
+> session). Brooks recreated the sandbox specifically to add that repo. Do not create a
+> second IaC system — extend his.
+>
+> **First moves for the new session:**
+> 1. Read this file fully, then `CLAUDE.md` (conventions: discuss-before-build, Brooks
+>    pushes — never push or touch git config, announce commits at message end, no stale
+>    artifacts, review-loop-until-zero-blocking).
+> 2. Locate and read Brooks' Pulumi repo (mounted somewhere in/next to this workspace —
+>    ask him where if unclear). Learn: language, project/stack layout, state backend,
+>    how it auto-deploys, naming/tagging conventions, and **whether it already creates a
+>    GitHub OIDC provider** (one per account — the port must look it up, not recreate it).
+> 3. Discuss the port plan with Brooks (plan mode), mirroring his Pulumi conventions.
+>
+> **What the port must preserve from `infra/template.yaml`** (every line of it was
+> pressure-tested + agent-reviewed; treat as the spec, then delete it per artifact policy):
+> - Private versioned S3 + CloudFront **OAC**; bucket policy grants `s3:GetObject` AND
+>   `s3:ListBucket` (ListBucket = real 404s instead of 403s) conditioned on the
+>   distribution ARN; CustomErrorResponse 404 → `/404.html` (code 404, TTL 60).
+> - The **CloudFront viewer-request function verbatim** (host canonicalization incl.
+>   *.cloudfront.net, query-string-preserving single-hop 301s, trailing-slash canonical,
+>   directory→index.html rewrite). It was verified by executing 15+ cases in node.
+> - Headers policy: CSP (`connect-src` = Sentry ingest host, see below), HSTS **without**
+>   includeSubDomains (learning.brooksbuilds.com shares the zone), nosniff,
+>   referrer-policy, frame DENY, permissions-policy; **beta adds X-Robots-Tag noindex**.
+> - Two environments: beta = `beta.brooksbuilds.com`, single hostname; production =
+>   apex + `www` (301 → apex). ACM certs in **us-east-1** (explicit provider in Pulumi).
+> - GitHub OIDC deploy role per env: trust `aud=sts.amazonaws.com` +
+>   `sub=repo:BrooksPatton/brooks_builds_consulting:ref:refs/heads/main`; minimal policy
+>   (ListBucket on bucket, Put/DeleteObject on bucket/*, CreateInvalidation on the dist).
+> - Distribution: Compress, redirect-to-https, http2and3, IPv6 (→ A **and** AAAA ALIAS
+>   records), PriceClass_100, managed CachingOptimized, DefaultRootObject index.html.
+>
+> **Values that must carry over:**
+> - Sentry ingest host for the CSP: **`o1079394.ingest.us.sentry.io`** (the real DSN is
+>   already committed in `site/assets/sentry-init.js` — DSNs are public by design).
+> - GitHub Actions variables the workflows consume: `BETA_/PROD_` + `AWS_DEPLOY_ROLE_ARN`,
+>   `S3_BUCKET`, `CF_DISTRIBUTION_ID`. **The workflows themselves need no changes** —
+>   they only consume those three values per environment, whatever tool created them.
+>
+> **Open questions to settle with Brooks during port planning:**
+> - Should Pulumi manage the site's DNS records (ACM validation + ALIAS for beta/apex/www)
+>   or does he keep DNS manual? (Undecided; he never answered — his caution is about the
+>   zone also hosting learning.brooksbuilds.com.)
+> - Whether beta + prod become two Pulumi stacks of one project (mirroring his LMS layout)
+>   or whatever shape his existing setup suggests.
+>
+> **Where Brooks is in his checklist below:** CAA verified clean; Sentry project created;
+> real DSN committed. Next after the port: deploy beta infra → BETA_* variables → beta DNS.
+
 Phase 1 (building the site) is complete. This plan takes the site to production. Like Phase 1, done is not the exit condition — passing review is.
 
 **Artifact policy (Brooks' rule): the repo keeps only code and actively-used files — no historical plan documents.** Concretely:
@@ -101,10 +155,10 @@ Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push
 
 ### Beta — do now, in order
 
-- [ ] **Pre-flight CAA check**: run `dig CAA brooksbuilds.com`. Empty result = fine. If records exist, one must permit `amazon.com`, or the ACM certificate silently fails to issue.
-- [ ] **Create a Sentry project** (type: Browser JavaScript) and copy its DSN.
-- [ ] **Put the DSN in `site/assets/sentry-init.js`** (replacing the placeholder marked `TODO(brooks)`), commit, push.
-- [ ] **Deploy the beta stack**: the exact `aws cloudformation deploy` command is at the top of `infra/template.yaml` — fill in your `HostedZoneId` and the DSN's ingest host (`SentryIngestHost` must match the DSN you just pasted).
+- [x] **Pre-flight CAA check**: run `dig CAA brooksbuilds.com`. Empty result = fine. If records exist, one must permit `amazon.com`, or the ACM certificate silently fails to issue.
+- [x] **Create a Sentry project** (type: Browser JavaScript) and copy its DSN.
+- [x] **Put the DSN in `site/assets/sentry-init.js`** (replacing the placeholder marked `TODO(brooks)`), commit, push.
+- [ ] **Deploy the beta infra** — ⚠ superseded by the Pulumi port (see HANDOFF at top): this becomes `pulumi up` on the beta stack once the port lands. The CloudFormation command in `infra/template.yaml`'s header remains a working fallback (remember `SentryIngestHost=o1079394.ingest.us.sentry.io`).
 - [ ] **Set the beta GitHub Actions variables** (repo Settings → Secrets and variables → Actions → **Variables** tab — they're not secrets): `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`, values from the beta stack's Outputs.
 - [ ] **Trigger a beta deploy**: push anything to main (or re-run the latest Deploy Beta run) and confirm the Deploy Beta workflow actually deploys instead of skipping.
 - [ ] **Beta DNS**: in Route53, create A **and** AAAA ALIAS records for `beta.brooksbuilds.com` pointing at the beta stack's `DistributionDomainName` output.

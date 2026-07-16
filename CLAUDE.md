@@ -1,10 +1,14 @@
 # Brooks Builds Consulting — Project Conventions
 
 Marketing site for Brooks' fractional Director of Engineering consulting business.
-Two environments on S3 + CloudFront (one CloudFormation template, two stacks): **beta**
-(beta.brooksbuilds.com, auto-deployed on every push to main, noindex) and **production**
-(brooksbuilds.com apex canonical + www redirect, deployed only via the manual `Release`
-workflow in the Actions tab).
+Two environments on S3 + CloudFront: **beta** (beta.brooksbuilds.com, auto-deployed on every
+push to main, noindex) and **production** (brooksbuilds.com apex canonical + www redirect,
+deployed only via the manual `Release` workflow in the Actions tab).
+
+**Infra is mid-port from CloudFormation to Pulumi** — building on Brooks' existing private
+Pulumi repo (deploys his LMS + lambdas), NOT a separate IaC system. `infra/template.yaml`
+is the reviewed spec until the port lands. Read the HANDOFF section at the top of
+`PRODUCTION.md` before touching infrastructure.
 
 ## How to work with Brooks
 

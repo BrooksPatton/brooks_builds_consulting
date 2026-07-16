@@ -10,7 +10,7 @@
 // ReferenceError of our own on top.
 if (typeof Sentry !== "undefined") {
   Sentry.init({
-    dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
+    dsn: "https://a3bc6def6de7907c346434c1983b78c9@o1079394.ingest.us.sentry.io/4511745899233280",
     sampleRate: 1.0,
     // One Sentry project serves both environments; tag events by host so beta
     // noise is filterable (anything that isn't apex/www counts as beta).

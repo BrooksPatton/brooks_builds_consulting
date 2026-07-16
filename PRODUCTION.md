@@ -95,24 +95,38 @@ Initial commit (or commits) and push to GitHub — Brooks already sanctioned pus
 ### Step 5 — Report + hand Brooks the manual runbook
 Final message: what was built, what CI does, and the ordered manual runbook below. Update PRODUCTION.md checklist.
 
-## Brooks' manual runbook (things only he can do)
+## Brooks' checklist (things only you can do — check them off as you go)
 
-Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push to main, serves `X-Robots-Tag: noindex`) and **production** (apex + www, deployed only by manually running the **Release** workflow). Exact stack commands live in the header of `infra/template.yaml`.
+Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push to main, serves `X-Robots-Tag: noindex`) and **production** (apex + www, deployed only by manually running the **Release** workflow). Exact stack commands live in the header comment of `infra/template.yaml`.
 
-**Beta (now):**
-1. **Pre-flight**: `dig CAA brooksbuilds.com` (if CAA exists, it must permit `amazon.com` or ACM fails silently).
-2. **Sentry**: create a Browser-JS project; put the DSN in `site/assets/sentry-init.js` AND the ingest host in the `SentryIngestHost` stack parameter (must match). Events tag themselves `beta`/`production` by hostname.
-3. **Deploy the beta stack** (`brooksbuilds-site-beta`, `Environment=beta`, `CreateOIDCProvider=true` — beta creates the account's one OIDC provider).
-4. **GitHub**: add Actions **variables** (not secrets) from the beta stack outputs: `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`. Next push to main deploys beta automatically.
-5. **Beta DNS**: A+AAAA ALIAS for `beta.brooksbuilds.com` → beta distribution domain. Verify end-to-end on the beta URL (placeholders are fine there): 200 + headers + `X-Robots-Tag: noindex`, cloudfront.net URL 301s to beta host, styled 404.
+### Beta — do now, in order
 
-**Release (when the content is ready):**
-6. **Launch blockers**: real scheduling URL (3 spots + `BOOKING_URL` in `tests/links.spec.js`), real pricing, headshot, social URLs — grep `TODO(brooks)`.
-7. **Deploy the prod stack** (`brooksbuilds-site-prod`, `Environment=production`, `CreateOIDCProvider=false`); add `PROD_*` GitHub variables from its outputs.
-8. **Run the Release workflow** (Actions tab → Release → Run workflow); smoke-test `https://<prod-dist>.cloudfront.net` — expect 301 to the apex.
-9. **DNS cutover**: 4 ALIAS records (A+AAAA × apex+www) → prod distribution domain. Don't touch `learning.*` or MX/TXT.
-10. **Uptime monitor** (UptimeRobot/Better Stack free tier): check apex for HTTP 200 **+ a content string** ("Fractional Director"), second check on www expecting 301.
-11. **Later**: verify every `*.brooksbuilds.com` subdomain is HTTPS-only → one-line stack update adds `includeSubDomains` (+preload); optional Google Search Console (one DNS TXT) + submit sitemap.
+- [ ] **Pre-flight CAA check**: run `dig CAA brooksbuilds.com`. Empty result = fine. If records exist, one must permit `amazon.com`, or the ACM certificate silently fails to issue.
+- [ ] **Create a Sentry project** (type: Browser JavaScript) and copy its DSN.
+- [ ] **Put the DSN in `site/assets/sentry-init.js`** (replacing the placeholder marked `TODO(brooks)`), commit, push.
+- [ ] **Deploy the beta stack**: the exact `aws cloudformation deploy` command is at the top of `infra/template.yaml` — fill in your `HostedZoneId` and the DSN's ingest host (`SentryIngestHost` must match the DSN you just pasted).
+- [ ] **Set the beta GitHub Actions variables** (repo Settings → Secrets and variables → Actions → **Variables** tab — they're not secrets): `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`, values from the beta stack's Outputs.
+- [ ] **Trigger a beta deploy**: push anything to main (or re-run the latest Deploy Beta run) and confirm the Deploy Beta workflow actually deploys instead of skipping.
+- [ ] **Beta DNS**: in Route53, create A **and** AAAA ALIAS records for `beta.brooksbuilds.com` pointing at the beta stack's `DistributionDomainName` output.
+- [ ] **Verify beta**: `https://beta.brooksbuilds.com` serves the site (placeholders are fine here); response headers include the CSP and `X-Robots-Tag: noindex`; the raw `*.cloudfront.net` URL 301s to the beta host; a made-up path shows the styled 404.
+
+### Release — when the content is ready
+
+- [ ] **Fill the launch blockers** (grep `TODO(brooks)` to find them all): real scheduling URL (3 places in `site/index.html` + `BOOKING_URL` in `tests/links.spec.js`), real pricing, headshot, confirm social URLs.
+- [ ] **Verify the content on beta** — it auto-deploys on push; click through everything once.
+- [ ] **Deploy the prod stack** (second command in `infra/template.yaml`'s header — note `CreateOIDCProvider=false`).
+- [ ] **Set the prod GitHub Actions variables**: `PROD_AWS_DEPLOY_ROLE_ARN`, `PROD_S3_BUCKET`, `PROD_CF_DISTRIBUTION_ID` from the prod stack's Outputs.
+- [ ] **Run the Release workflow** (Actions tab → Release → Run workflow, on main).
+- [ ] **Smoke-test the prod distribution**: `https://<prod-dist>.cloudfront.net` should 301 to `https://brooksbuilds.com`.
+- [ ] **DNS cutover**: 4 ALIAS records (A + AAAA for both `brooksbuilds.com` and `www.brooksbuilds.com`) → prod `DistributionDomainName`. Don't touch `learning.*` or any MX/TXT records.
+- [ ] **Run the post-cutover verification** (section below).
+- [ ] **Uptime monitor** (UptimeRobot/Better Stack free tier): check `https://brooksbuilds.com` for HTTP 200 **plus** the string "Fractional Director"; second check on `https://www.brooksbuilds.com` expecting a 301.
+
+### Post-launch, no rush
+
+- [ ] Once every `*.brooksbuilds.com` subdomain is verified HTTPS-only, add `includeSubDomains` to HSTS (one-line change in `infra/template.yaml`, redeploy the prod stack).
+- [ ] Optional: Google Search Console (verifies via one DNS TXT record) and submit `sitemap.xml`.
+- [ ] Tell Claude the rollout is done → PRODUCTION.md gets folded into a lean README and deleted (artifact policy).
 
 ## Verification (end-to-end, after cutover)
 

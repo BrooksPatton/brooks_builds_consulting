@@ -14,8 +14,7 @@ Description: >
 #     --stack-name brooksbuilds-site-beta \
 #     --capabilities CAPABILITY_NAMED_IAM \
 #     --parameter-overrides Environment=beta DomainName=beta.brooksbuilds.com \
-#       HostedZoneId=<ZONE_ID> CreateOIDCProvider=true \
-#       SentryIngestHost=<oXXXXXX.ingest.us.sentry.io — from your DSN; do not skip>
+#       HostedZoneId=<ZONE_ID> CreateOIDCProvider=true
 #
 # Production: apex + www, deployed only by the manual Release workflow.
 #
@@ -24,8 +23,7 @@ Description: >
 #     --stack-name brooksbuilds-site-prod \
 #     --capabilities CAPABILITY_NAMED_IAM \
 #     --parameter-overrides Environment=production DomainName=brooksbuilds.com \
-#       HostedZoneId=<ZONE_ID> CreateOIDCProvider=false \
-#       SentryIngestHost=<oXXXXXX.ingest.us.sentry.io — from your DSN; do not skip>
+#       HostedZoneId=<ZONE_ID> CreateOIDCProvider=false
 
 Parameters:
   Environment:
@@ -51,10 +49,10 @@ Parameters:
     Description: GitHub org/repo allowed to assume the deploy role (main branch only).
   SentryIngestHost:
     Type: String
-    Default: o0.ingest.sentry.io
+    Default: o1079394.ingest.us.sentry.io
     Description: >
-      TODO(brooks): set to your DSN's ingest host (e.g. oXXXXXX.ingest.us.sentry.io).
-      Must match the DSN in site/assets/sentry-init.js — change both together.
+      Ingest host of the DSN in site/assets/sentry-init.js (goes into the CSP
+      connect-src). If the DSN ever changes, change both together.
   CreateOIDCProvider:
     Type: String
     Default: "true"

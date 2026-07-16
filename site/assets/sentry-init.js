@@ -2,9 +2,9 @@
  * Sentry init. Loaded after the vendored /assets/sentry.min.js (both deferred).
  * Kept in its own file so the CSP can stay script-src 'self' with no 'unsafe-inline'.
  *
- * TODO(brooks): replace the DSN below with your real one (Sentry -> project settings).
- * The DSN's ingest host must ALSO be set in the CSP connect-src in infra/template.yaml —
- * change both together or events will be silently blocked by the browser.
+ * The DSN's ingest host (o1079394.ingest.us.sentry.io) must ALSO be in the infra CSP's
+ * connect-src — if either ever changes, change both together or events will be
+ * silently blocked by the browser.
  */
 // Guarded: if sentry.min.js failed to load (blocker, network), don't add a
 // ReferenceError of our own on top.

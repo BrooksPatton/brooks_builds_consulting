@@ -12,8 +12,9 @@
 > 1. Read this file fully, then `CLAUDE.md` (conventions: discuss-before-build, Brooks
 >    pushes — never push or touch git config, announce commits at message end, no stale
 >    artifacts, review-loop-until-zero-blocking).
-> 2. Locate and read Brooks' Pulumi repo (mounted somewhere in/next to this workspace —
->    ask him where if unclear). Learn: language, project/stack layout, state backend,
+> 2. Locate and read Brooks' Pulumi repo. He recreated the sandbox intending to add it —
+>    if it isn't at an obvious path, **ask him where it is as your first question; don't
+>    go filesystem-hunting**. Learn: language, project/stack layout, state backend,
 >    how it auto-deploys, naming/tagging conventions, and **whether it already creates a
 >    GitHub OIDC provider** (one per account — the port must look it up, not recreate it).
 > 3. Discuss the port plan with Brooks (plan mode), mirroring his Pulumi conventions.
@@ -53,6 +54,12 @@
 >
 > **Where Brooks is in his checklist below:** CAA verified clean; Sentry project created;
 > real DSN committed. Next after the port: deploy beta infra → BETA_* variables → beta DNS.
+>
+> **Also:** check `git log --oneline origin/main..main` early — the handoff-era commits
+> may be unpushed (Brooks pushes; never push from the sandbox). Everything in this file
+> below the two checklists is pre-execution planning history — the HANDOFF and the
+> checklists are the live truth; the history mentions files that were since deleted
+> (PLAN.md, design_inspiration/) by design.
 
 Phase 1 (building the site) is complete. This plan takes the site to production. Like Phase 1, done is not the exit condition — passing review is.
 
@@ -144,7 +151,7 @@ Fresh-context agents, in parallel; fix → re-run affected lens until a clean ro
 3. **Site files** — 404 absolute paths, meta/canonical/OG correctness (absolute apex URLs everywhere), robots/sitemap host consistency, Sentry init quality, no regression to Phase-1 brand/copy rules, html-validate/stylelint/prettier clean.
 
 ### Step 4 — Commit, push, first CI run
-Initial commit (or commits) and push to GitHub — Brooks already sanctioned pushing this repo's work in the session; CI (not deploy) should go green on the push. Deploy will fail until Brooks does his manual steps — expected; say so.
+Initial commit (or commits); **Brooks pushes** (convention: never push from the sandbox — end the message with a push-ready callout). CI (not deploy) should go green on his push. Deploy skips until Brooks does his manual steps — expected; say so.
 
 ### Step 5 — Report + hand Brooks the manual runbook
 Final message: what was built, what CI does, and the ordered manual runbook below. Update PRODUCTION.md checklist.
@@ -158,7 +165,7 @@ Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push
 - [x] **Pre-flight CAA check**: run `dig CAA brooksbuilds.com`. Empty result = fine. If records exist, one must permit `amazon.com`, or the ACM certificate silently fails to issue.
 - [x] **Create a Sentry project** (type: Browser JavaScript) and copy its DSN.
 - [x] **Put the DSN in `site/assets/sentry-init.js`** (replacing the placeholder marked `TODO(brooks)`), commit, push.
-- [ ] **Deploy the beta infra** — ⚠ superseded by the Pulumi port (see HANDOFF at top): this becomes `pulumi up` on the beta stack once the port lands. The CloudFormation command in `infra/template.yaml`'s header remains a working fallback (remember `SentryIngestHost=o1079394.ingest.us.sentry.io`).
+- [ ] **Deploy the beta infra** — ⚠ superseded by the Pulumi port (see HANDOFF at top): this becomes `pulumi up` on the beta stack once the port lands. The CloudFormation command in `infra/template.yaml`'s header remains a working fallback.
 - [ ] **Set the beta GitHub Actions variables** (repo Settings → Secrets and variables → Actions → **Variables** tab — they're not secrets): `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`, values from the beta stack's Outputs.
 - [ ] **Trigger a beta deploy**: push anything to main (or re-run the latest Deploy Beta run) and confirm the Deploy Beta workflow actually deploys instead of skipping.
 - [ ] **Beta DNS**: in Route53, create A **and** AAAA ALIAS records for `beta.brooksbuilds.com` pointing at the beta stack's `DistributionDomainName` output.

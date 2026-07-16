@@ -55,6 +55,8 @@ is the reviewed spec until the port lands. Read the HANDOFF section at the top o
 - Serve locally: `python3 -m http.server 8080 --bind 0.0.0.0 --directory site`
 - Lint: `npm run lint` (html-validate + stylelint + prettier check)
 - Test: `npm test` (Playwright link-contract tests; starts its own server on :4173).
-  In the sandbox, browsers need `sbx policy allow network cdn.playwright.dev,playwright.download.prss.microsoft.com`
-  run on the host once, then `npx playwright install chromium`.
+  Try it directly first — the browser may already be installed. If it's missing:
+  `npx playwright install chromium` (and if THAT is firewall-blocked, Brooks runs
+  `sbx policy allow network cdn.playwright.dev,playwright.download.prss.microsoft.com`
+  on the host once — though these allows persist across sandboxes and were already granted).
 - Re-vendor Sentry after a version bump: `npm run vendor:sentry`

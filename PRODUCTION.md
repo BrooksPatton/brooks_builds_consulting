@@ -1,138 +1,37 @@
-# Brooks Builds Consulting — Production Deployment (Execution Playbook, Phase 2)
+# Brooks Builds Consulting — Production Rollout (living checklist)
 
-> ## Status (updated 2026-07-16)
+> ## Status (updated 2026-07-17)
 >
-> **The Pulumi port has landed in the repo.** Infrastructure is now the Pulumi project at
-> `infra/` (stacks `beta` + `prod`, same Pulumi Cloud org as Brooks' `brooks_builds`
-> project). **`PLAN.md` is the working plan and runbook for this phase** — its Part 3 is
-> the ordered bootstrap/cutover checklist Brooks executes. The old CloudFormation spec
-> `infra/template.yaml` stays as the proven fallback until the first successful beta
-> `pulumi up` + verification, then gets deleted (runbook item).
+> **Beta is live**: `beta.brooksbuilds.com` runs on the Pulumi project at `infra/` (stacks
+> `beta` + `prod`) and is verified end-to-end. `infra/template.yaml` is deleted — Pulumi is
+> the sole source of truth. **`PLAN.md` holds the remaining runbook** (platform retirement +
+> prod launch); this file holds Brooks' checklists and the post-cutover verification.
 >
-> The retirement of the old platform app at the apex happens in Brooks' `brooks_builds`
-> repo (two sequenced PRs, prepared on branches there — see PLAN.md Part 2).
+> When the rollout completes, the durable content here (deploy how-to, verification, notes
+> below) folds into a lean `README.md` and this file is deleted (artifact policy).
 >
-> Values that carry over everywhere: Sentry ingest host `o1079394.ingest.us.sentry.io`
-> (CSP `connect-src`; lives in `infra/Pulumi.beta.yaml` + `infra/Pulumi.prod.yaml` AND
-> `site/assets/sentry-init.js` — change together). The site deploy workflows are unchanged
-> and keep consuming the `BETA_/PROD_` GitHub Actions variables, now fed from
-> `pulumi stack output`.
+> Coupling reminder: the Sentry ingest host `o1079394.ingest.us.sentry.io` lives in
+> `site/assets/sentry-init.js` AND `sentry_ingest_host` in `infra/Pulumi.*.yaml` — change
+> together.
 
-Phase 1 (building the site) is complete. This plan takes the site to production. Like Phase 1, done is not the exit condition — passing review is.
-
-**Artifact policy (Brooks' rule): the repo keeps only code and actively-used files — no historical plan documents.** Concretely:
-- **Step 0 of execution**: write this document to `PRODUCTION.md` (the working checklist while this phase is live) and **delete `PLAN.md`** — the build phase is done; its useful content (brand tokens, review conventions) is already captured here and in memory.
-- **When this phase completes**: fold the durable operational content (deploy how-to, Sentry update procedure, cache/CSP notes, runbook) into a lean `README.md` and **delete `PRODUCTION.md`**. End state: no plan files in the repo at all.
-- Flag for Brooks: `design_inspiration/` (reference screenshots, including Dustin's site) is no longer actively used — approving this plan approves removing it. `logos/` stays (source brand assets used to generate og-image/favicons).
-
-**Workflow convention (Brooks' rule, encode it): create a repo-level `CLAUDE.md`** containing the project conventions, including: (1) when Brooks asks for a plan, present it and iterate through discussion — do NOT start implementing on plan approval alone; wait for an explicit "build it"-style go-ahead; (2) the no-stale-artifacts rule above; (3) site facts an agent needs (deploy root is `site/`, no-JS/no-external-requests baseline + vendored-Sentry exception, CSP/ingest-host duplication, brand tokens, review-loop convention). Also save the discuss-before-build preference as a feedback memory so it applies beyond this repo.
-
-## Context
-
-The site (plain HTML+CSS, zero JS, zero external requests) is finished and reviewed but lives only in the repo — nothing is deployed and nothing is committed/pushed yet. Brooks wants a production setup with error monitoring (Sentry), linting, CI/CD, and the things a solo operator forgets: SEO/social meta, security & caching headers, uptime monitoring, 404 page.
-
-Decisions confirmed with Brooks (do not re-ask):
-- **Host: S3 + CloudFront** — DNS for brooksbuilds.com is in Route53, and Route53 can't point an apex at Cloudflare Pages (ALIAS is AWS-only, CF requires its own DNS for apex). Staying all-AWS avoids a nameserver migration.
-- **Domain: brooksbuilds.com (apex, canonical) + www (301 → apex)**. The site's DNS records are Pulumi-managed (originally manual). `learning.brooksbuilds.com` (his LMS) is on the same zone and **must not be disturbed**.
-- **Sentry: vendored SDK** — pinned copy of `@sentry/browser`'s CDN bundle committed to the repo; only external call is event ingest. No loader snippet, no Sentry CDN at runtime.
-- **In scope**: SEO/social pack, security + caching headers, uptime monitoring (manual signup). **Out of scope**: analytics.
-- **IaC** — ⚠ superseded: originally one CloudFormation template, two stacks; now the Pulumi project at `infra/` (stacks `beta`/`prod`, us-east-1 — CloudFront needs the ACM cert there). Same environment semantics (beta = noindex + auto-apply on main; prod = apex+www, manual). See the status header and PLAN.md.
-
-## Architecture
-
-Private S3 bucket (versioned, public access blocked) → CloudFront with **Origin Access Control**, both aliases on one distribution. A **CloudFront Function** (viewer-request, `cloudfront-js-2.0`, `AutoPublish: true`) does three jobs: 301 any host that isn't `brooksbuilds.com` (catches www AND `*.cloudfront.net`), 301 `/index.html` → `/`, and rewrite `/foo/`-style URLs to `/foo/index.html`. Security headers via a `ResponseHeadersPolicy`. GitHub Actions deploys over **OIDC** (no stored AWS keys).
-
-Key gotchas already pressure-tested (bake these in, don't rediscover them):
-- **Deploy root must be `site/`**: the repo root holds `PLAN.md`, `design_inspiration/` (screenshots of Dustin's site), and `logos/` (raw brand files incl. .ai). A root-level `s3 sync` would publish all of it. Move `index.html`, `css/`, `assets/` into `site/` and sync only that.
-- **HSTS without `includeSubDomains`** at launch — `includeSubDomains` served from the apex would force HTTPS on `learning.brooksbuilds.com` and everything else on the zone. Flip it later only after verifying every subdomain is HTTPS-only.
-- **ACM cert**: both `brooksbuilds.com` + `www` as SANs; validation CNAMEs auto-created (additive, harmless) so provisioning doesn't hang. ALIAS records are Pulumi-managed too (A+AAAA per hostname) — no manual DNS anymore.
-- **Real 404s under OAC**: grant the CloudFront principal `s3:ListBucket` (not just `GetObject`) so S3 returns 404 instead of 403 for missing keys; then one CustomErrorResponse 404 → `/404.html` (code 404, ErrorCachingMinTTL 60). Bucket policy must be a **separate resource** from the bucket (distribution ARN condition — looks circular, isn't).
-- **OIDC**: `AWS::IAM::OIDCProvider` needs a non-empty `ThumbprintList` (`6938fd4d98bab03faadb97b34396831e3780aea1`) even though AWS ignores it; only one provider per URL per account (check none exists). Role trust: `aud=sts.amazonaws.com` AND `sub=repo:BrooksPatton/brooks_builds_consulting:ref:refs/heads/main` (exact, case-sensitive; breaks if the workflow adds `environment:`). Workflow MUST set `permissions: {id-token: write, contents: read}`.
-- **CSP + vendored Sentry**: init goes in a local file `site/assets/sentry-init.js` (never inline — avoids `'unsafe-inline'`), loaded with `defer` after `sentry.min.js`. CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src https://<DSN ingest host>; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; upgrade-insecure-requests`. The ingest host lives in BOTH sentry-init.js and `sentry_ingest_host` in the `infra/Pulumi.*.yaml` stack configs — note the duplication in comments. Sentry init: `sampleRate: 1.0`, anchored `allowUrls` matching apex/www/beta hosts to keep extension noise off the free tier, and an `environment` tag (production vs beta) derived from the hostname.
-- **Cache without hashed filenames**: HTML/xml/txt → `public, max-age=0, must-revalidate`; css/assets → `public, max-age=86400`. Two-pass `aws s3 sync` (`--delete` on the assets pass only). `/*` invalidation counts as ONE path — free at this scale. README note: bump `?v=N` on the stylesheet link if a same-day CSS fix ever matters.
-- **404.html must use absolute asset paths** (`/css/styles.css`) — it renders at arbitrary URLs.
-- **OG image must be raster** (~1200×630 PNG, absolute URL) — SVG doesn't render in Slack/LinkedIn previews. Export/compose from `logos/` assets (ImageMagick or manual).
-- Distribution: `Compress: true`, `redirect-to-https`, `http2and3`, IPv6 on (→ **4 ALIAS records**: A+AAAA × apex+www), PriceClass_100, managed CachingOptimized policy, DefaultRootObject `index.html`.
-
-## Deliverables
-
-```
-PRODUCTION.md                       — this playbook + living checklist (Step 0; deleted at phase end,
-                                      durable content folds into README.md; PLAN.md deleted at Step 0)
-CLAUDE.md                           — project conventions: discuss-before-build, artifact policy,
-                                      site facts for future agents
-site/                               — index.html, css/, assets/ moved here (git mv)
-site/404.html                       — new, absolute asset paths, on-brand
-site/robots.txt                     — allows all; Sitemap: https://brooksbuilds.com/sitemap.xml
-site/sitemap.xml                    — single URL, apex host only
-site/favicon.ico                    — generated from the icon PNG (old crawlers request it blindly)
-site/assets/apple-touch-icon.png    — 180×180
-site/assets/og-image.png            — 1200×630 raster from brand assets
-site/assets/sentry.min.js           — vendored pinned @sentry/browser CDN bundle
-site/assets/sentry-init.js          — init w/ DSN placeholder, allowUrls filter
-infra/template.yaml                 — CloudFormation: bucket, bucket policy, ACM cert, OAC,
-                                      CF function, response-headers policy, distribution,
-                                      OIDC provider, deploy role, outputs
-.github/workflows/ci.yml            — PRs: npm ci; html-validate, stylelint, prettier check;
-                                      vendored-Sentry version-drift check
-.github/workflows/deploy-reusable.yml — shared deploy logic (workflow_call): lint gate → OIDC
-                                      → two-pass s3 sync → cloudfront invalidation
-.github/workflows/deploy.yml        — Deploy Beta: push to main, BETA_* vars, calls reusable
-.github/workflows/release.yml       — Release: manual dispatch, PROD_* vars, calls reusable
-package.json + package-lock.json    — devDeps: html-validate, stylelint(+config-standard),
-                                      prettier, @sentry/browser (vendoring source / Dependabot
-                                      update reminder); scripts: lint, vendor:sentry
-.stylelintrc.json, .prettierrc      — configs matching existing code style
-.github/dependabot.yml              — npm + github-actions ecosystems
-index.html edits                    — canonical link, OG/Twitter meta (absolute URLs),
-                                      favicon/apple-touch links, two deferred Sentry scripts
-```
-
-Site stays build-free: nothing in `node_modules` ships; `site/` is the whole deployment.
-
-# How to execute
-
-### Step 0 — Bootstrap
-Write this document to `PRODUCTION.md`; delete `PLAN.md`; remove `design_inspiration/` (sanctioned by this plan's approval); create the repo `CLAUDE.md` with the conventions above; save the discuss-before-build feedback memory.
-
-### Step 1 — Repo restructure + new site files (no AWS)
-`git mv` the site into `site/`; author all new site files and index.html edits; set up package.json, lint configs, vendoring script; run `npm run vendor:sentry`. Lint must pass locally. Restart the local server with `--directory site` so Brooks' published port keeps working.
-
-### Step 2 — Infra + CI files
-Author `infra/template.yaml` and both workflows exactly per the gotchas above. Validate what's validatable offline: `aws cloudformation validate-template` needs credentials — if unavailable, use `npx yaml-lint`/careful review and flag it for the review lenses.
-
-### Step 3 — Independent agent review (loop until zero blocking)
-Fresh-context agents, in parallel; fix → re-run affected lens until a clean round (max ~4 rounds, then surface the stalemate):
-1. **Infra correctness** — template.yaml + this playbook's gotcha list: OAC policy separation + ListBucket, cert SANs/validation, function logic (host/index/clean-URL cases), header policy vs CSP requirements, OIDC trust exactness, IAM minimality, distribution settings, HSTS scoped without includeSubDomains.
-2. **CI/CD correctness** — both workflows: OIDC permissions block, two-pass sync flag order (`--delete` placement!), correct vars, lint gating deploy, dependabot config, drift check between package.json Sentry pin and vendored file.
-3. **Site files** — 404 absolute paths, meta/canonical/OG correctness (absolute apex URLs everywhere), robots/sitemap host consistency, Sentry init quality, no regression to Phase-1 brand/copy rules, html-validate/stylelint/prettier clean.
-
-### Step 4 — Commit, push, first CI run
-Initial commit (or commits); **Brooks pushes** (convention: never push from the sandbox — end the message with a push-ready callout). CI (not deploy) should go green on his push. Deploy skips until Brooks does his manual steps — expected; say so.
-
-### Step 5 — Report + hand Brooks the manual runbook
-Final message: what was built, what CI does, and the ordered manual runbook below. Update PRODUCTION.md checklist.
+Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push to main,
+serves `X-Robots-Tag: noindex`) and **production** (apex + www, deployed only by manually
+running the **Release** workflow). Infra changes: `pulumi preview` on PRs, `up-beta` on merge,
+`up-prod` manual. The remaining infra commands are in `PLAN.md` Part 2.
 
 ## Brooks' checklist (things only you can do — check them off as you go)
 
-Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push to main, serves `X-Robots-Tag: noindex`) and **production** (apex + www, deployed only by manually running the **Release** workflow). The exact infra commands are in `PLAN.md` Part 3 (the port runbook).
+### Beta — ✅ complete (2026-07-17)
 
-### Beta — do now, in order
-
-- [x] **Pre-flight CAA check**: run `dig CAA brooksbuilds.com`. Empty result = fine. If records exist, one must permit `amazon.com`, or the ACM certificate silently fails to issue.
-- [x] **Create a Sentry project** (type: Browser JavaScript) and copy its DSN.
-- [x] **Put the DSN in `site/assets/sentry-init.js`** (replacing the placeholder marked `TODO(brooks)`), commit, push.
-- [ ] **Bootstrap + beta infra: follow `PLAN.md` Part 3, Phase 1** (steps 1–7). Summary: push the port branch and open its PR; identity bootstrap locally (`pulumi preview`, then `pulumi up --target` the OIDC provider + CI role); set the `PULUMI_ACCESS_TOKEN` secret + `PULUMI_CI_ROLE_ARN` variable; inspect the PR's previews; merge → `up-beta` applies the rest. No manual DNS — Pulumi owns the beta A/AAAA records now.
-- [ ] **Set the beta GitHub Actions variables** (repo Settings → Secrets and variables → Actions → **Variables** tab — they're not secrets): `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`, values from `pulumi stack output` on the beta stack.
-- [ ] **Trigger a beta deploy**: push anything to main (or re-run the latest Deploy Beta run) and confirm the Deploy Beta workflow actually deploys instead of skipping.
-- [ ] **Verify beta**: `https://beta.brooksbuilds.com` serves the site (placeholders are fine here); response headers include the CSP and `X-Robots-Tag: noindex`; the raw `*.cloudfront.net` URL 301s to the beta host; a made-up path shows the styled 404.
-- [ ] **Delete `infra/template.yaml`** (one-line commit): Pulumi has provisioned real infrastructure and is now the source of truth — the CloudFormation fallback has served its purpose (artifact policy).
+CAA clean; Sentry project + DSN committed; identity bootstrap done; PR previewed/merged;
+`up-beta` applied; `BETA_*` variables set; content deployed; headers/redirects/404 verified;
+template.yaml deleted.
 
 ### Release — when the content is ready
 
 - [ ] **Fill the launch blockers** (grep `TODO(brooks)` to find them all): real scheduling URL (3 places in `site/index.html` + `BOOKING_URL` in `tests/links.spec.js`), real pricing, headshot, confirm social URLs.
 - [ ] **Verify the content on beta** — it auto-deploys on push; click through everything once.
-- [ ] **Retire the old platform app + launch prod: follow `PLAN.md` Part 3, Phase 2** (steps 8–13). Summary: merge the two brooks_builds retirement PRs (review the delete list on PR B!); the apex goes dark (fine — the old site has no users); then Actions → Infrastructure → Run workflow applies the prod stack (cert, distribution, all 4 ALIAS records, deploy role — DNS included, no manual records).
+- [ ] **Retire the old platform app + launch prod: follow `PLAN.md` Part 2** (steps 8–13). Summary: merge the two brooks_builds retirement PRs (review the delete list on PR B!); the apex goes dark (fine — the old site has no users); then Actions → Infrastructure → Run workflow applies the prod stack (cert, distribution, all 4 ALIAS records, deploy role — DNS included, no manual records).
 - [ ] **Set the prod GitHub Actions variables**: `PROD_AWS_DEPLOY_ROLE_ARN`, `PROD_S3_BUCKET`, `PROD_CF_DISTRIBUTION_ID` from `pulumi stack output` on the prod stack.
 - [ ] **Run the Release workflow** (Actions tab → Release → Run workflow, on main).
 - [ ] **Smoke-test the prod distribution**: `https://<prod-dist>.cloudfront.net` should 301 to `https://brooksbuilds.com`.
@@ -143,7 +42,7 @@ Two environments: **beta** (`beta.brooksbuilds.com`, auto-deployed by every push
 
 - [ ] Once every `*.brooksbuilds.com` subdomain is verified HTTPS-only, add `includeSubDomains` to HSTS (`strictTransportSecurity` in `infra/wrappers/static_site.ts`; merging the PR redeploys beta, prod via Run workflow).
 - [ ] Optional: Google Search Console (verifies via one DNS TXT record) and submit `sitemap.xml`.
-- [ ] Tell Claude the rollout is done → PRODUCTION.md gets folded into a lean README and deleted (artifact policy).
+- [ ] Tell Claude the rollout is done → PLAN.md + PRODUCTION.md fold into a lean README and are deleted (artifact policy).
 
 ### Account baseline (from the AWS best-practices review — console tasks, no deadline)
 
@@ -157,21 +56,22 @@ Root MFA and a budget alert are already in place. Remaining:
 
 - `curl -sI https://brooksbuilds.com` → 200 + all security headers (cross-check securityheaders.com)
 - `curl -sI https://www.brooksbuilds.com` and the cloudfront.net domain → 301 to apex; `/index.html` → 301 `/`
-- `curl -s https://brooksbuilds.com/nonexistent -o /dev/null -w '%{http_code}'` → 404, styled page
+- `curl -s https://brooksbuilds.com/nonexistent -o /dev/null -w '%{http_code}'` → 404, styled page (extensionless paths 301 to their `/`-form first — expected)
 - Browser DevTools: zero CSP violations; `Sentry.captureMessage('test')` from the console arrives in Sentry
 - `learning.brooksbuilds.com` still resolves and serves unchanged
 - CI: a trivial PR runs lint; merge to main deploys and the change is live after invalidation
 
-## Status checklist
+## Notes to carry into the README at fold time
 
-- [x] Step 0: PRODUCTION.md bootstrapped; PLAN.md + design_inspiration/ removed; CLAUDE.md conventions written; feedback memory saved
-- [x] Step 1: site/ restructure + SEO/Sentry/lint files complete, lint clean. Notes: Sentry vendored by esbuild-bundling the locked npm package (their CDN is firewalled; also more reproducible) — tree-shaken to init/captureException/captureMessage, 85KB/29KB gz, version banner + CI drift check. Prettier normalized all site files; html-validate configured to accept prettier's void-tag style; stylelint `no-descending-specificity` off (flags non-overlapping selectors).
-- [x] Step 2: infra template + workflows authored; cfn-lint clean, workflow YAML parses. `SentryIngestHost` is a template parameter (CSP), `CreateOIDCProvider` toggleable for the one-per-account limit.
-- [x] Step 3: review rounds
-  - Round 1: **site files PASS** (4 polish applied: absolute asset paths in index.html, favicon.ico linked instead of the 1000px PNG, guarded Sentry.init, sentry-init.js moved to the no-cache sync pass). **Infra PASS** (3 polish applied: redirects preserve query strings, trailing-slash canonicalization with single-hop redirects, SentryIngestHost added to the documented deploy command; new function code verified by executing all 15 host/URI/query cases in node). **CI/CD PASS on workflow logic** (reviewer verified against aws-cli source that the two-pass `--delete` has no mid-deploy outage; fixes applied: `--delete` added to the html pass so removed pages actually disappear, corrected the comment's semantics, ci.yml got `permissions: contents: read` + concurrency). Its one blocking finding was repo state — everything untracked — which is Step 4 itself; the commit below includes every pipeline file it enumerated.
-  - Round 2 (targeted): rewritten CloudFront function re-verified by direct execution (15/15 cases correct); cfn-lint clean; full lint suite green. Loop converged: zero unresolved blocking findings.
-- [~] Step 4: all pipeline files committed locally (1b033eb + CLAUDE.md convention commits). Pushes are Brooks' job by convention (see CLAUDE.md) — push ready, awaiting his `git push`. CI should go green on the push; the deploy workflow fails until runbook steps 4–5 are done (expected).
-- [x] Pulumi port (2026-07-16): `infra/` project authored per PLAN.md — stacks beta/prod, intent-level wrappers, OAC, verbatim viewer function (30 behavior tests green), OIDC deploy + CI roles, Pulumi-managed DNS; `infra.yml` workflow (preview on PR / up-beta on merge / up-prod manual); platform-retirement branches prepared in the brooks_builds repo. Review loop: round 1 found 2 blocking (CI role's prod OIDC lookup permission; over-targeting in the bootstrap command) — fixed, re-review round PASS with zero blocking. Typecheck + function matrix + full lint + site Playwright tests all green. Awaiting Brooks' runbook (PLAN.md Part 3).
-- [ ] Step 5: report + runbook delivered; awaiting Brooks' manual steps
-- [x] Phase 3 (beta/prod split): template environment-aware (beta = single host + X-Robots-Tag noindex; conditionals verified for both parameter sets), deploy split into reusable workflow + Deploy Beta (push to main) + Release (manual dispatch), Sentry events tagged by hostname with anchored allowUrls. Delta review: PASS, 0 blocking; polish applied (anchored allowUrls, per-stack output descriptions, all-vars + main-ref guards on both callers, convention-vs-IAM note in CLAUDE.md). cfn-lint clean, function matrix re-verified for beta domain, lint + 9 tests green.
-- [ ] Post-cutover verification complete (requires Brooks' runbook)
+- **404.html must keep absolute asset paths** (`/css/styles.css`) — it renders at arbitrary URLs.
+- **OG image must stay raster** (~1200×630 PNG, absolute URL) — SVG doesn't render in Slack/LinkedIn previews; source assets in `logos/`.
+
+## History (condensed; details in git log)
+
+- Site build phase complete; production pipeline (site/ deploy root, SEO/Sentry/lint files,
+  CloudFormation template, CI/CD workflows) built and review-looped to zero blocking (1b033eb).
+- Beta/prod environment split added (reusable deploy workflow + Deploy Beta + Release).
+- CloudFormation → Pulumi port (2026-07-16/17): `infra/` project, review loop round 1 found
+  2 blocking (CI-role prod OIDC lookup permission; bootstrap over-targeting) → fixed →
+  re-review PASS. Beta provisioned via PR-preview → merge-up flow; verified live; template
+  deleted. Platform-retirement branches prepared in the brooks_builds repo.

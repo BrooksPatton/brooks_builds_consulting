@@ -175,20 +175,20 @@ yet — and even that gets a local `pulumi preview` first.
 
 ### Phase 1 — beta live (no downtime risk, do anytime)
 
-- [ ] 1. The port lands as a PR (sandbox commits, you push the branch). Don't merge yet —
+- [x] 1. The port lands as a PR (sandbox commits, you push the branch). Don't merge yet —
       the `check` job (typecheck + function tests) runs; AWS jobs skip green.
-- [ ] 2. Pre-flight: `aws iam list-open-id-connect-providers` — if a GitHub provider already
+- [x] 2. Pre-flight: `aws iam list-open-id-connect-providers` — if a GitHub provider already
       exists, set `create_github_oidc_provider: false` on beta first.
-- [ ] 3. On the PR branch: `cd infra && npm ci && pulumi login && pulumi stack init beta &&
+- [x] 3. On the PR branch: `cd infra && npm ci && pulumi login && pulumi stack init beta &&
       pulumi stack init prod` (same org as brooks_builds).
-- [ ] 4. Identity bootstrap, preview first: `pulumi stack select beta && pulumi preview` —
+- [x] 4. Identity bootstrap, preview first: `pulumi stack select beta && pulumi preview` —
       inspect the whole beta plan. Then apply ONLY the identity pieces:
       `pulumi up --target '**github_oidc_provider**' --target '**pulumi_ci_role**'`
       (the trailing `**` glob also matches the CI role's inline policy; exact URNs are shown
       by the preview). Deliberately NO `--target-dependents` — that would drag in the deploy
       role, whose policy needs the not-yet-created bucket/distribution, and the plan errors.
       Everything else stays unapplied.
-- [ ] 5. GitHub repo settings: secret `PULUMI_ACCESS_TOKEN`; variable `PULUMI_CI_ROLE_ARN`.
+- [x] 5. GitHub repo settings: secret `PULUMI_ACCESS_TOKEN`; variable `PULUMI_CI_ROLE_ARN`.
       Re-run the PR's checks → the `preview` job now runs both stacks under the OIDC role.
       Inspect the previews on the PR.
 - [ ] 6. Merge → `up-beta` applies the rest automatically (bucket, cert, distribution, beta

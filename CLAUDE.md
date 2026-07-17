@@ -6,14 +6,14 @@ push to main, noindex) and **production** (brooksbuilds.com apex canonical + www
 deployed only via the manual `Release` workflow in the Actions tab).
 
 **Infra is the Pulumi project at `infra/`** — TypeScript, stacks `beta` + `prod`, same Pulumi
-Cloud org as Brooks' `brooks_builds` repo (his LMS/platform infra; often mounted in the sandbox).
-CI model: `pulumi preview` on PRs touching `infra/**` (both stacks), `pulumi up` on beta at merge,
-prod only via manual workflow_dispatch (`infra.yml`). **Style rule**: raw Pulumi calls live only
-in `infra/wrappers/*` (intent-level wrappers — one function per concept, not per AWS resource);
-`infra/index.ts` reads as intent. **The sandbox never gets AWS/Pulumi credentials or any deploy
-path** — Brooks runs all cloud commands himself. While the rollout phase is in flight, `PLAN.md`
-is the working plan/runbook; read it before touching infrastructure. (`infra/template.yaml` is
-the retired CloudFormation spec, kept only until the first verified beta `pulumi up`.)
+Cloud org as Brooks' `brooks_builds` repo (his LMS/platform infra; when mounted in the sandbox
+it lives at `/Users/brooks/code/brooks-builds/brooks_builds`). CI model: `pulumi preview` on PRs
+touching `infra/**` (both stacks), `pulumi up` on beta at merge, prod only via manual
+workflow_dispatch (`infra.yml`). **Style rule**: raw Pulumi calls live only in `infra/wrappers/*`
+(intent-level wrappers — one function per concept, not per AWS resource); `infra/index.ts` reads
+as intent. **The sandbox never gets AWS/Pulumi credentials or any deploy path** — Brooks runs all
+cloud commands himself. While the rollout phase is in flight, `PLAN.md` is the working
+plan/runbook; read it before touching infrastructure.
 
 ## How to work with Brooks
 
@@ -37,6 +37,9 @@ the retired CloudFormation spec, kept only until the first verified beta `pulumi
   and that's intentional. Commit locally, then end the message with a "push ready" callout listing
   the unpushed commits; Brooks runs `git push` from his own terminal. Don't modify his git
   remotes/config.
+- **On session start, recover push state.** Chat callouts die with the session: check both repos
+  (`git log origin/main..main`, plus any working branches) for unpushed commits and re-surface the
+  push-ready list before doing new work.
 
 ## Site facts
 

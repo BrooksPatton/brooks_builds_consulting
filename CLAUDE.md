@@ -26,6 +26,11 @@ the retired CloudFormation spec, kept only until the first verified beta `pulumi
 - **Review loop convention.** Nontrivial changes get reviewed by fresh-context agents (brand, copy,
   code/infra lenses as relevant), findings fixed and re-reviewed until a round has zero blocking
   findings. Done is not the exit condition — passing review is.
+- **Hand-offs live in the plan file, not chat.** After doing work, anything Brooks must do goes
+  into the current plan file (PLAN.md while a phase is in flight) in a clearly titled
+  "Your next actions" section: checkboxes, **exactly one action per box** (split "set the three
+  variables" into three boxes; secret-vs-variable-type distinctions get their own box), with
+  expected output where useful. Chat may summarize; the plan file is the actionable copy.
 - **Announce commits at the end of the message.** Brooks' terminal may not scroll up; if a turn
   made a git commit, the last lines of the reply must say so explicitly (hash + one-line summary).
 - **Never push from the sandbox — Brooks pushes.** No push credentials are set up in the sandbox

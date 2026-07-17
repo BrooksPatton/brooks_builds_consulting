@@ -31,7 +31,7 @@ template.yaml deleted.
 
 - [ ] **Fill the launch blockers** (grep `TODO(brooks)` to find them all): real scheduling URL (3 places in `site/index.html` + `BOOKING_URL` in `tests/links.spec.js`), real pricing, headshot, confirm social URLs.
 - [ ] **Verify the content on beta** — it auto-deploys on push; click through everything once.
-- [ ] **Retire the old platform app + launch prod: follow `PLAN.md` Part 2** (steps 8–13). Summary: merge the two brooks_builds retirement PRs (review the delete list on PR B!); the apex goes dark (fine — the old site has no users); then Actions → Infrastructure → Run workflow applies the prod stack (cert, distribution, all 4 ALIAS records, deploy role — DNS included, no manual records).
+- [ ] **Retire the old platform app + launch prod: work through `PLAN.md` Part 2 — "Your next actions"** (atomic checkboxes; retirement PRs first, then the prod apply — DNS included, no manual records).
 - [ ] **Set the prod GitHub Actions variables**: `PROD_AWS_DEPLOY_ROLE_ARN`, `PROD_S3_BUCKET`, `PROD_CF_DISTRIBUTION_ID` from `pulumi stack output` on the prod stack.
 - [ ] **Run the Release workflow** (Actions tab → Release → Run workflow, on main).
 - [ ] **Smoke-test the prod distribution**: `https://<prod-dist>.cloudfront.net` should 301 to `https://brooksbuilds.com`.

@@ -30,29 +30,47 @@ takes ~10–20 min (CloudFront disables it first).
 Optional tidy, your call: later delete the unused GitHub secrets (`PLATFORM_WEB_BUCKET`,
 `CLOUDFRONT_DISTRIBUTION_ID`) and the `website/` Rust app source in that repo.
 
-## Part 2 — Your runbook (ordered; sandbox does none of this)
+## Part 2 — Your next actions (one checkbox = one action, in order)
 
 Apex is dark between retirement and launch — fine, the old site has no users; do the
-retirement whenever, launch when content is ready.
+retirement whenever, launch when content is ready. Content launch blockers are tracked in
+PRODUCTION.md → Release.
 
-- [ ] 8. brooks_builds PR A (forceDestroy prep): review its `pulumi preview` on the PR, merge,
-      auto-up (fast).
-- [ ] 9. brooks_builds PR B (retirement): **review the preview's delete list** — exactly the
-      platform resources, nothing else. Merge; the up takes ~10–20 min (CloudFront disable +
-      delete). Apex goes dark and stays dark until step 10 — no scheduling needed.
-- [ ] 10. When content is ready and verified on beta: Actions → Infrastructure → Run workflow
-       (prod) — the prod plan was already visible in every PR preview. ~15–25 min.
-- [ ] 11. Set `PROD_AWS_DEPLOY_ROLE_ARN` / `PROD_S3_BUCKET` / `PROD_CF_DISTRIBUTION_ID` repo
-       variables from prod stack outputs (`cd infra && pulumi stack select prod &&
-       pulumi stack output <name>`).
-- [ ] 12. Run the Release workflow → site live.
-- [ ] 13. Post-cutover verification (PRODUCTION.md) + learning.brooksbuilds.com unchanged +
-       `dig MX brooksbuilds.com` unchanged + uptime monitor.
+### Retirement (do anytime)
 
-Ordering constraint (the only hard one): prod `up` must come after retirement PR B — CloudFront
-rejects duplicate aliases across distributions, and we deliberately fail loudly on Route53
-conflicts instead of overwriting. If run out of order it errors cleanly; finish retirement and
-re-run.
+- [ ] In the brooks_builds repo: `git push -u origin retire-platform-prep retire-platform`
+- [ ] Open PR A from `retire-platform-prep` (base: main)
+- [ ] Review PR A's `pulumi preview` on the PR (expect: 2 in-place **updates** — the two
+      platform buckets gain forceDestroy; nothing created or deleted)
+- [ ] Merge PR A
+- [ ] Confirm the auto `pulumi up` run went green (fast)
+- [ ] Open PR B from `retire-platform` (base: main)
+- [ ] Review PR B's preview **delete list** (expect exactly: platformBucket, platformLogBucket,
+      platform certificate + its validation records, the platform OAI, platform_distribution,
+      apex + www A records — nothing else; learning/hasura/MX/TXT untouched)
+- [ ] Merge PR B
+- [ ] Confirm the up finished (~10–20 min; CloudFront disables the distribution first.
+      Apex goes dark now — expected, stays dark until launch)
+
+### Prod launch (when content is ready and verified on beta)
+
+- [ ] Actions → Infrastructure → Run workflow, on main (expect: the 19-create prod plan you
+      previewed; ~15–25 min. If it errors with alias/record conflicts, retirement PR B hasn't
+      finished — that's the deliberate ordering guard, not damage)
+- [ ] `cd infra && pulumi stack select prod`
+- [ ] Set repo **variable** `PROD_S3_BUCKET` = `pulumi stack output bucketName`
+- [ ] Set repo **variable** `PROD_CF_DISTRIBUTION_ID` = `pulumi stack output distributionId`
+- [ ] Set repo **variable** `PROD_AWS_DEPLOY_ROLE_ARN` = `pulumi stack output deployRoleArn`
+- [ ] Actions → Release → Run workflow, on main (expect: lint gate → sync → invalidation)
+- [ ] Smoke-test: `curl -sI https://$(pulumi stack output distributionDomainName)` → 301 to
+      `https://brooksbuilds.com`
+- [ ] Tell Claude the prod stack is live → I run the post-cutover curl verification
+      (PRODUCTION.md section; the wildcard network allow already covers apex + www)
+- [ ] Confirm `https://learning.brooksbuilds.com` still serves unchanged
+- [ ] Confirm `dig MX brooksbuilds.com` is unchanged
+- [ ] Set up the uptime monitor (spec: PRODUCTION.md → Release, last item)
+- [ ] Tell Claude the rollout is done → README fold; PLAN.md + PRODUCTION.md get deleted
+      (artifact policy)
 
 ### Account baseline (from the AWS best-practices review; console tasks, no deadline)
 

@@ -1,0 +1,14 @@
+# beta.brooksbuilds.com — auto-applied by pushes to main (infra.yml up-beta job).
+# Nothing here is secret. This stack owns the account-level singletons (GitHub OIDC
+# provider + pulumi CI role); prod looks them up instead of creating duplicates.
+config:
+  # CloudFront requires its ACM certificate in us-east-1; the whole project lives there.
+  aws:region: us-east-1
+  brooks_builds_consulting:domain_name: beta.brooksbuilds.com
+  brooks_builds_consulting:zone_name: brooksbuilds.com
+  brooks_builds_consulting:github_repo: BrooksPatton/brooks_builds_consulting
+  # Ingest host of the DSN in site/assets/sentry-init.js (goes into the CSP
+  # connect-src). If the DSN ever changes, change both together.
+  brooks_builds_consulting:sentry_ingest_host: o1079394.ingest.us.sentry.io
+  brooks_builds_consulting:create_github_oidc_provider: "true"
+  brooks_builds_consulting:create_pulumi_ci_role: "true"

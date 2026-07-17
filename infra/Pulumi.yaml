@@ -1,0 +1,6 @@
+name: brooks_builds_consulting
+description: brooksbuilds.com marketing site — S3 + CloudFront + GitHub OIDC (beta + prod stacks)
+runtime:
+  name: nodejs
+  options:
+    packagemanager: npm

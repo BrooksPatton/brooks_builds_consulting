@@ -5,10 +5,15 @@ Two environments on S3 + CloudFront: **beta** (beta.brooksbuilds.com, auto-deplo
 push to main, noindex) and **production** (brooksbuilds.com apex canonical + www redirect,
 deployed only via the manual `Release` workflow in the Actions tab).
 
-**Infra is mid-port from CloudFormation to Pulumi** — building on Brooks' existing private
-Pulumi repo (deploys his LMS + lambdas), NOT a separate IaC system. `infra/template.yaml`
-is the reviewed spec until the port lands. Read the HANDOFF section at the top of
-`PRODUCTION.md` before touching infrastructure.
+**Infra is the Pulumi project at `infra/`** — TypeScript, stacks `beta` + `prod`, same Pulumi
+Cloud org as Brooks' `brooks_builds` repo (his LMS/platform infra; often mounted in the sandbox).
+CI model: `pulumi preview` on PRs touching `infra/**` (both stacks), `pulumi up` on beta at merge,
+prod only via manual workflow_dispatch (`infra.yml`). **Style rule**: raw Pulumi calls live only
+in `infra/wrappers/*` (intent-level wrappers — one function per concept, not per AWS resource);
+`infra/index.ts` reads as intent. **The sandbox never gets AWS/Pulumi credentials or any deploy
+path** — Brooks runs all cloud commands himself. While the rollout phase is in flight, `PLAN.md`
+is the working plan/runbook; read it before touching infrastructure. (`infra/template.yaml` is
+the retired CloudFormation spec, kept only until the first verified beta `pulumi up`.)
 
 ## How to work with Brooks
 
@@ -35,8 +40,9 @@ is the reviewed spec until the port lands. Read the HANDOFF section at the top o
 - **Baseline: no JS, no external requests**, with exactly one sanctioned exception: the vendored
   Sentry SDK (`site/assets/sentry.min.js`, pinned via package.json + `npm run vendor:sentry`) whose
   only network call is event ingest. Never add CDN scripts/fonts/styles; the CSP will block them.
-- **CSP coupling**: the Sentry ingest host appears in BOTH `site/assets/sentry-init.js` and the CSP
-  in `infra/template.yaml` — change them together.
+- **CSP coupling**: the Sentry ingest host appears in `site/assets/sentry-init.js` AND in
+  `sentry_ingest_host` in `infra/Pulumi.beta.yaml` + `infra/Pulumi.prod.yaml` (consumed by the CSP
+  in `infra/wrappers/static_site.ts`) — change them together.
 - **No build step.** HTML/CSS ship as-authored. Cache: HTML/xml/txt no-cache, css/assets 1 day; if a
   same-day CSS fix must propagate, bump the `?v=N` query on the stylesheet link.
 - **Brand tokens**: teal #006480, secondary #a3bbc1, light #ebebeb; page bg #f3f3f3, borders #d2d2d2,
@@ -48,7 +54,9 @@ is the reviewed spec until the port lands. Read the HANDOFF section at the top o
 - **Beta/prod separation is by convention, not IAM**: both deploy roles trust the same OIDC claim
   (`refs/heads/main`), so any main-branch workflow could technically assume the prod role.
   Acceptable for a solo repo; the hard-enforcement upgrade is a GitHub `environment:` on the
-  release job + matching `:environment:` sub claim in the prod role's trust policy.
+  release job + matching `:environment:` sub claim in the prod role's trust policy. Until then,
+  **never add `environment:` to any workflow job** — it changes the OIDC sub claim's shape and
+  breaks role trust (the pulumi CI role additionally trusts the `pull_request` claim for previews).
 
 ## Commands
 
@@ -60,3 +68,6 @@ is the reviewed spec until the port lands. Read the HANDOFF section at the top o
   `sbx policy allow network cdn.playwright.dev,playwright.download.prss.microsoft.com`
   on the host once — though these allows persist across sandboxes and were already granted).
 - Re-vendor Sentry after a version bump: `npm run vendor:sentry`
+- Infra (in `infra/`): `npm run typecheck` (tsc), `npm test` (executes the CloudFront
+  viewer-request function against its behavior matrix — run after any edit to it). No
+  `pulumi preview`/`up` from the sandbox — those are CI's and Brooks' jobs.

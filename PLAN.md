@@ -9,7 +9,9 @@ Replace `infra/template.yaml` (CloudFormation, never deployed) with a **new stan
 project** in this repo at `infra/`, two stacks (`beta`, `prod`), same Pulumi Cloud org as your
 `brooks_builds` project. Retire the platform web app in the `brooks_builds` repo to free the
 apex. OIDC for every deploy path (no long-lived AWS keys). Pulumi manages the site's DNS.
-Nothing deploys from the sandbox — you bootstrap from your machine, then CI owns it.
+Nothing deploys from the sandbox. Every infra change is inspected as a `pulumi preview` on its
+PR and applied by `pulumi up` on merge; your only local action is a one-time identity bootstrap
+(OIDC provider + CI role), previewed first.
 
 ## Decisions this plan encodes (already agreed — flag if any look wrong)
 
@@ -28,6 +30,19 @@ Nothing deploys from the sandbox — you bootstrap from your machine, then CI ow
 ---
 
 ## Part 1 — New `infra/` Pulumi project (this repo)
+
+### Scaffolding
+
+Start from the official boilerplate, not hand-authored files: `pulumi new typescript
+--generate-only` in `infra/` (no backend login or AWS creds needed — it only writes
+Pulumi.yaml/package.json/tsconfig/index.ts), then reshape into the layout below. The Pulumi CLI
+isn't in the sandbox yet; install it from the GitHub release tarball (github.com is
+firewall-allowed). If the release download is blocked, fallback: Brooks runs the scaffold
+command himself and the sandbox builds on it.
+
+`package.json` pins the toolchain: `"engines": { "node": "22.x" }` (matches the workflow's
+node 22 and the sandbox's v22.22.1), plus an `.nvmrc` with `22` (same convention as
+brooks_builds' stripe_webhook project) so every environment agrees on the Node version.
 
 ### Layout
 
@@ -153,40 +168,55 @@ secrets and the `website/` Rust app source.
 
 ## Part 3 — Your runbook (ordered; sandbox does none of this)
 
+The rule you asked for, encoded throughout: **every infra change is inspected as a `pulumi
+preview` on a PR before `pulumi up` applies it on merge.** The only exception is a one-time
+identity bootstrap (the OIDC provider + CI role) — CI can't assume a role that doesn't exist
+yet — and even that gets a local `pulumi preview` first.
+
 ### Phase 1 — beta live (no downtime risk, do anytime)
 
-- [ ] 1. Merge the port PR (infra CI jobs skip green — nothing configured yet).
-- [ ] 2. Pre-flight: `aws iam list-open-id-connect-providers` — if a GitHub provider already
+- [x] 1. The port lands as a PR (sandbox commits, you push the branch). Don't merge yet —
+      the `check` job (typecheck + function tests) runs; AWS jobs skip green.
+- [x] 2. Pre-flight: `aws iam list-open-id-connect-providers` — if a GitHub provider already
       exists, set `create_github_oidc_provider: false` on beta first.
-- [ ] 3. `cd infra && npm ci && pulumi login && pulumi stack init beta && pulumi stack init prod`
-      (same org as brooks_builds).
-- [ ] 4. `pulumi stack select beta && pulumi up` — creates bucket, cert, distribution, beta DNS,
-      OIDC provider, deploy role, CI role. ~10–20 min.
-- [ ] 5. GitHub repo settings: secret `PULUMI_ACCESS_TOKEN`; variables `PULUMI_CI_ROLE_ARN`,
-      `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID`
-      (all from `pulumi stack output`).
-- [ ] 6. Re-run Deploy Beta → verify beta (CSP + noindex headers, cloudfront.net 301s, styled
-      404). Then the template.yaml deletion commit.
-- [ ] 7. Prove the CI path now, not on launch day: open a trivial infra PR → previews run under
-      the OIDC role; merge → up-beta no-ops. Fix any permission gaps.
+- [x] 3. On the PR branch: `cd infra && npm ci && pulumi login && pulumi stack init beta &&
+      pulumi stack init prod` (same org as brooks_builds).
+- [x] 4. Identity bootstrap, preview first: `pulumi stack select beta && pulumi preview` —
+      inspect the whole beta plan. Then apply ONLY the identity pieces:
+      `pulumi up --target '**github_oidc_provider**' --target '**pulumi_ci_role**'`
+      (the trailing `**` glob also matches the CI role's inline policy; exact URNs are shown
+      by the preview). Deliberately NO `--target-dependents` — that would drag in the deploy
+      role, whose policy needs the not-yet-created bucket/distribution, and the plan errors.
+      Everything else stays unapplied.
+- [x] 5. GitHub repo settings: secret `PULUMI_ACCESS_TOKEN`; variable `PULUMI_CI_ROLE_ARN`.
+      Re-run the PR's checks → the `preview` job now runs both stacks under the OIDC role.
+      Inspect the previews on the PR.
+- [ ] 6. Merge → `up-beta` applies the rest automatically (bucket, cert, distribution, beta
+      DNS, deploy role; ~10–20 min).
+- [ ] 7. Set `BETA_AWS_DEPLOY_ROLE_ARN`, `BETA_S3_BUCKET`, `BETA_CF_DISTRIBUTION_ID` variables
+      from `pulumi stack output`; re-run Deploy Beta → verify beta (CSP + noindex headers,
+      cloudfront.net 301s, styled 404). Then the template.yaml deletion commit.
 
-### Phase 2 — prod cutover (deliberate dark window, ~30–60 min; pick a quiet time)
+### Phase 2 — platform retirement + prod launch (apex is dark in between — fine, the old
+### site has no users; do the retirement whenever, launch when content is ready)
 
-- [ ] 8. Content launch blockers done, verified on beta.
-- [ ] 9. Merge brooks_builds PR A (fast).
-- [ ] 10. Merge brooks_builds PR B after reviewing its delete list; wait for the up. **Apex goes
-       dark here.**
-- [ ] 11. Immediately: Actions → Infrastructure → Run workflow (prod). ~15–25 min. (Local
-       `pulumi up` on prod is the fallback.)
-- [ ] 12. Set `PROD_AWS_DEPLOY_ROLE_ARN` / `PROD_S3_BUCKET` / `PROD_CF_DISTRIBUTION_ID` from
+- [ ] 8. brooks_builds PR A (forceDestroy prep): review its `pulumi preview` on the PR, merge,
+      auto-up (fast).
+- [ ] 9. brooks_builds PR B (retirement): **review the preview's delete list** — exactly the
+      platform resources, nothing else. Merge; the up takes ~10–20 min (CloudFront disable +
+      delete). Apex goes dark and stays dark until step 10 — no scheduling needed.
+- [ ] 10. When content is ready and verified on beta: Actions → Infrastructure → Run workflow
+       (prod) — the prod plan was already visible in every PR preview. ~15–25 min.
+- [ ] 11. Set `PROD_AWS_DEPLOY_ROLE_ARN` / `PROD_S3_BUCKET` / `PROD_CF_DISTRIBUTION_ID` from
        prod stack outputs.
-- [ ] 13. Run the Release workflow → site live; window ends.
-- [ ] 14. Post-cutover verification (PRODUCTION.md) + learning.brooksbuilds.com unchanged +
+- [ ] 12. Run the Release workflow → site live.
+- [ ] 13. Post-cutover verification (PRODUCTION.md) + learning.brooksbuilds.com unchanged +
        `dig MX brooksbuilds.com` unchanged + uptime monitor.
 
-Why the window can't be zero: CloudFront rejects duplicate aliases across distributions, and we
-deliberately fail loudly on Route53 conflicts instead of overwriting — prod resources can only
-exist once the platform's are gone. Steps 10–13 are the entire window.
+Ordering constraint (the only hard one): prod `up` must come after retirement PR B — CloudFront
+rejects duplicate aliases across distributions, and we deliberately fail loudly on Route53
+conflicts instead of overwriting. If run out of order it errors cleanly; finish retirement and
+re-run.
 
 ### Account baseline (from the AWS best-practices review; console tasks, no deadline)
 
@@ -215,6 +245,9 @@ Root MFA ✓ and budget alert ✓ already in place. Remaining:
 1. Pulumi v7 API naming drift → caught by tsc + your first preview; not semantic.
 2. Pre-existing OIDC provider → runbook step 2 + config flag.
 3. Cutover out of order → fails loudly by design; recovery is finish-retirement, re-run.
-4. CI-role permission gaps → flushed out by runbook step 7 before launch day.
+4. CI-role permission gaps → flushed out in phase 1: the port PR's own preview and up-beta run
+   under the CI role while local `pulumi up` remains a fallback.
 5. CI role can self-modify / write in the zone → accepted for solo account, documented in code.
-6. Dark-window length → dominated by cert + CloudFront deploys; irreducible, so scheduled.
+6. `pulumi up --target` bootstrap is fiddly (URN syntax) → preview output shows the exact URNs;
+   worst case, a full local `pulumi up` on beta is an acceptable fallback (it just moves the
+   first apply off CI — every later change still goes preview-on-PR → up-on-merge).

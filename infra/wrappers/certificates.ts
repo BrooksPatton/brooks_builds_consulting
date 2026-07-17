@@ -38,8 +38,12 @@ export function createValidatedCertificate({
   // validation records for these names, fail loudly instead of adopting records that the
   // other stack's teardown would later delete out from under us.
   const validationRecords = domains.map((domain) => {
+    // The `?? []` guard: a targeted `pulumi up` that skips the certificate resolves its
+    // outputs to undefined (not "unknown") inside dependents' applies, which would crash
+    // the program mid-update. The skipped record never materializes, so the empty result
+    // is harmless; full ups always see real values.
     const option = certificate.domainValidationOptions.apply((options) =>
-      options.find((candidate) => candidate.domainName === domain)!,
+      (options ?? []).find((candidate) => candidate.domainName === domain)!,
     );
 
     return new aws.route53.Record(`${pulumiName}_validation_${domain}`, {
